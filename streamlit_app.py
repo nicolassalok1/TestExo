@@ -287,240 +287,264 @@ def longstaff_schwartz_price(option: Option, process, n_paths: int, n_steps: int
 
 st.title("Application unifiée de pricing d'options")
 
-tab_bermuda_barrier, tab_longstaff, tab_lookback = st.tabs(
-    [
-        "Bermuda / Barrier (Crank–Nicolson)",
-        "Longstaff (MC / LS / BSM / CRR)",
-        "Lookback / Barrier / European",
-    ]
+st.sidebar.header("Paramètres communs")
+S0_common = st.sidebar.number_input("S0 (spot)", value=100.0, min_value=0.01, key="S0_common")
+K_common = st.sidebar.number_input("K (strike)", value=100.0, min_value=0.01, key="K_common")
+T_common = st.sidebar.number_input("T (maturité, années)", value=1.0, min_value=0.01, key="T_common")
+sigma_common = st.sidebar.number_input("Volatilité σ", value=0.2, min_value=0.0001, key="sigma_common")
+r_common = st.sidebar.number_input("Taux sans risque r", value=0.05, key="r_common")
+d_common = st.sidebar.number_input("Dividende continu d", value=0.0, key="d_common")
+
+tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
+    ["Européenne", "Américaine", "Lookback", "Barrière", "Bermuda"]
 )
 
 
-with tab_bermuda_barrier:
-    st.header("Bermuda / European / American & Barrier options")
+with tab_european:
+    st.header("Option européenne")
+    cpflag_eu = st.selectbox("Call / Put (européenne)", ["Call", "Put"], key="cpflag_eu")
+    cpflag_eu_char = "c" if cpflag_eu == "Call" else "p"
+    option_eu = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_eu == "Call")
 
-    st.sidebar.header("Paramètres Bermuda / Barrier")
-    S0_bb = st.sidebar.number_input("S0 (spot) - Bermuda/Barrier", value=100.0, min_value=0.01, key="S0_bb")
-    K_bb = st.sidebar.number_input("K (strike) - Bermuda/Barrier", value=100.0, min_value=0.01, key="K_bb")
-    T_bb = st.sidebar.number_input("T (maturité) - Bermuda/Barrier", value=1.0, min_value=0.01, key="T_bb")
-    vol_bb = st.sidebar.number_input("Volatilité σ - Bermuda/Barrier", value=0.4, min_value=0.0001, key="vol_bb")
-    r_bb = st.sidebar.number_input("Taux sans risque r - Bermuda/Barrier", value=0.025, key="r_bb")
-    d_bb = st.sidebar.number_input("Dividende continu d - Bermuda/Barrier", value=0.0175, key="d_bb")
+    tab_eu_bsm, tab_eu_cn, tab_eu_mc = st.tabs(
+        ["Black–Scholes–Merton", "PDE Crank–Nicolson", "Monte Carlo"]
+    )
 
-    tab_vanilla, tab_barrier = st.tabs(["Bermuda / European / American", "Barrier options"])
+    with tab_eu_bsm:
+        st.subheader("Formule fermée BSM")
+        if st.button("Calculer (BSM)", key="btn_eu_bsm"):
+            price_bsm = black_scholes_merton(r=r_common - d_common, sigma=sigma_common, option=option_eu)
+            st.write(f"**Prix BSM**: {price_bsm:.4f}")
 
-    with tab_vanilla:
-        st.subheader("Option européenne / américaine / bermudéenne")
-        typeflag_bb = st.selectbox("Type d'option", ["Eu", "Am", "Bmd"], key="typeflag_bb")
-        cpflag_bb = st.selectbox("Call / Put", ["c", "p"], key="cpflag_bb")
-
-        if st.button("Calculer (Bermuda/Eu/Am)", key="btn_bb_vanilla"):
-            model_bb = CrankNicolsonBS(
-                Typeflag=typeflag_bb,
-                cpflag=cpflag_bb,
-                S0=S0_bb,
-                K=K_bb,
-                T=T_bb,
-                vol=vol_bb,
-                r=r_bb,
-                d=d_bb,
+    with tab_eu_cn:
+        st.subheader("PDE Crank–Nicolson")
+        if st.button("Calculer (PDE)", key="btn_eu_cn"):
+            model_cn = CrankNicolsonBS(
+                Typeflag="Eu",
+                cpflag=cpflag_eu_char,
+                S0=S0_common,
+                K=K_common,
+                T=T_common,
+                vol=sigma_common,
+                r=r_common,
+                d=d_common,
             )
-            price_bb, delta_bb, gamma_bb, theta_bb = model_bb.CN_option_info()
+            price_cn, delta_cn, gamma_cn, theta_cn = model_cn.CN_option_info()
+            st.write(f"**Prix**: {price_cn:.4f}")
+            st.write(f"**Delta**: {delta_cn:.4f}")
+            st.write(f"**Gamma**: {gamma_cn:.4f}")
+            st.write(f"**Theta**: {theta_cn:.4f}")
 
-            st.write(f"**Prix**: {price_bb:.4f}")
-            st.write(f"**Delta**: {delta_bb:.4f}")
-            st.write(f"**Gamma**: {gamma_bb:.4f}")
-            st.write(f"**Theta**: {theta_bb:.4f}")
+    with tab_eu_mc:
+        st.subheader("Monte Carlo classique")
+        n_paths_eu = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_eu")
+        n_steps_eu = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_eu")
+        if st.button("Calculer (MC)", key="btn_eu_mc"):
+            process_eu = GeometricBrownianMotion(mu=r_common - d_common, sigma=sigma_common)
+            price_mc_eu = monte_carlo_simulation(
+                option=option_eu,
+                process=process_eu,
+                n=int(n_paths_eu),
+                m=int(n_steps_eu),
+            )
+            st.write(f"**Prix Monte Carlo**: {price_mc_eu:.4f}")
 
-    with tab_barrier:
-        st.subheader("Options barrière (Up-and-out / Double knock-out)")
-        barrier_type_bb = st.selectbox(
-            "Type de barrière", ["UNO (Up-and-out)", "DNO (Double knock-out)"], key="barrier_type_bb"
+
+with tab_american:
+    st.header("Option américaine")
+    cpflag_am = st.selectbox("Call / Put (américaine)", ["Call", "Put"], key="cpflag_am")
+    cpflag_am_char = "c" if cpflag_am == "Call" else "p"
+
+    tab_am_ls, tab_am_crr, tab_am_cn = st.tabs(
+        ["Longstaff–Schwartz", "Arbre CRR", "PDE Crank–Nicolson"]
+    )
+
+    with tab_am_ls:
+        st.subheader("Monte Carlo Longstaff–Schwartz")
+        process_type_am = st.selectbox(
+            "Processus sous-jacent", ["Geometric Brownian Motion", "Heston"], key="process_type_am"
         )
-        barrier_flag_bb = "UNO" if barrier_type_bb.startswith("UNO") else "DNO"
-        cpflag_barrier_bb = st.selectbox("Call / Put (barrière)", ["c", "p"], key="cpflag_barrier_bb")
-        Hu_bb = st.number_input("Barrière haute Hu", value=120.0, min_value=0.01, key="Hu_bb")
-        Hd_bb = st.number_input("Barrière basse Hd", value=0.0, min_value=0.0, key="Hd_bb")
+        n_paths_am = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_am")
+        n_steps_am = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_am")
 
-        if st.button("Calculer (barrière)", key="btn_bb_barrier"):
-            price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
-                Typeflag=barrier_flag_bb,
-                cpflag=cpflag_barrier_bb,
-                S0=S0_bb,
-                K=K_bb,
-                Hu=Hu_bb,
-                Hd=Hd_bb,
-                T=T_bb,
-                vol=vol_bb,
-                r=r_bb,
-                d=d_bb,
+        if process_type_am == "Geometric Brownian Motion":
+            process_am = GeometricBrownianMotion(mu=r_common - d_common, sigma=sigma_common)
+            v0_am = None
+        else:
+            kappa_am = st.number_input("κ (vitesse de rappel)", value=2.0, key="kappa_am")
+            theta_am = st.number_input("θ (variance long terme)", value=0.04, key="theta_am")
+            eta_am = st.number_input("η (vol de la variance)", value=0.5, key="eta_am")
+            rho_am = st.number_input("ρ (corrélation)", value=-0.7, min_value=-0.99, max_value=0.99, key="rho_am")
+            v0_am = st.number_input("v0 (variance initiale)", value=0.04, min_value=0.0001, key="v0_am")
+            process_am = HestonProcess(
+                mu=r_common - d_common, kappa=kappa_am, theta=theta_am, eta=eta_am, rho=rho_am
             )
 
+        if st.button("Calculer (LS)", key="btn_am_ls"):
+            option_am_ls = Option(s0=S0_common, T=T_common, K=K_common, v0=v0_am, call=cpflag_am == "Call")
+            price_ls = longstaff_schwartz_price(
+                option=option_am_ls,
+                process=process_am,
+                n_paths=int(n_paths_am),
+                n_steps=int(n_steps_am),
+            )
+            st.write(f"**Prix Longstaff–Schwartz**: {price_ls:.4f}")
+
+    with tab_am_crr:
+        st.subheader("Arbre binomial CRR")
+        n_tree_am = st.number_input("Nombre de pas de l'arbre", value=250, min_value=10, key="n_tree_am")
+        if st.button("Calculer (CRR)", key="btn_am_crr"):
+            option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
+            price_crr = crr_pricing(r=r_common, sigma=sigma_common, option=option_am_crr, n=int(n_tree_am))
+            st.write(f"**Prix CRR**: {price_crr:.4f}")
+
+    with tab_am_cn:
+        st.subheader("PDE Crank–Nicolson (américaine)")
+        if st.button("Calculer (PDE Am)", key="btn_am_cn"):
+            model_am = CrankNicolsonBS(
+                Typeflag="Am",
+                cpflag=cpflag_am_char,
+                S0=S0_common,
+                K=K_common,
+                T=T_common,
+                vol=sigma_common,
+                r=r_common,
+                d=d_common,
+            )
+            price_am, delta_am, gamma_am, theta_am = model_am.CN_option_info()
+            st.write(f"**Prix**: {price_am:.4f}")
+            st.write(f"**Delta**: {delta_am:.4f}")
+            st.write(f"**Gamma**: {gamma_am:.4f}")
+            st.write(f"**Theta**: {theta_am:.4f}")
+
+
+with tab_lookback:
+    st.header("Options lookback (floating strike)")
+
+    tab_lb_exact, tab_lb_mc, tab_lb_pde = st.tabs(["Exacte", "Monte Carlo", "PDE Crank–Nicolson"])
+
+    with tab_lb_exact:
+        st.subheader("Formule exacte")
+        t0_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t0_lb_exact")
+        if st.button("Calculer (Exact)", key="btn_lb_exact"):
+            lookback_exact = lookback_call_option(
+                T=T_common, t=t0_lb, S0=S0_common, r=r_common, sigma=sigma_common
+            )
+            price_lb_exact = lookback_exact.price_exact()
+            st.write(f"**Prix exact lookback**: {price_lb_exact:.6f}")
+
+    with tab_lb_mc:
+        st.subheader("Monte Carlo lookback")
+        t0_lb_mc = st.number_input("t (temps courant) MC", value=0.0, min_value=0.0, key="t0_lb_mc")
+        n_iters_lb = st.number_input("Itérations Monte Carlo", value=10_000, min_value=100, key="n_iters_lb_mc")
+        if st.button("Calculer (MC Lookback)", key="btn_lb_mc"):
+            lookback_mc = lookback_call_option(T=T_common, t=t0_lb_mc, S0=S0_common, r=r_common, sigma=sigma_common)
+            price_lb_mc = lookback_mc.price_monte_carlo(int(n_iters_lb))
+            st.write(f"**Prix Monte Carlo lookback**: {price_lb_mc:.6f}")
+
+    with tab_lb_pde:
+        st.subheader("PDE Crank–Nicolson lookback")
+        t0_lb_pde = st.number_input("t (temps courant) PDE", value=0.0, min_value=0.0, key="t0_lb_pde")
+        n_t_lb = st.number_input("Pas de temps PDE n_t", value=200, min_value=10, key="n_t_lb")
+        n_s_lb = st.number_input("Pas d'espace PDE n_s", value=200, min_value=10, key="n_s_lb")
+        if st.button("Calculer (PDE Lookback)", key="btn_lb_pde"):
+            lookback_pde = lookback_call_option(
+                T=T_common, t=t0_lb_pde, S0=S0_common, r=r_common, sigma=sigma_common
+            )
+            lookback_pde.price_pde(int(n_t_lb), int(n_s_lb))
+            price_lb_pde = lookback_pde.get_pde_result(z=1.0)
+            st.write(f"**Prix PDE lookback**: {price_lb_pde:.6f}")
+
+
+with tab_barrier:
+    st.header("Options barrière")
+
+    tab_barrier_cn, tab_barrier_lb = st.tabs(
+        ["Crank–Nicolson (UNO / DNO)", "Up-and-out (fermée / MC / PDE)"]
+    )
+
+    with tab_barrier_cn:
+        st.subheader("Barrières type up-and-out / double knock-out")
+        barrier_type = st.selectbox(
+            "Type de barrière", ["UNO (Up-and-out)", "DNO (Double knock-out)"], key="barrier_type_cn"
+        )
+        cpflag_barrier = st.selectbox("Call / Put", ["c", "p"], key="cpflag_barrier_cn")
+        Hu_cn = st.number_input("Barrière haute Hu", value=120.0, min_value=0.01, key="Hu_cn")
+        Hd_cn = st.number_input("Barrière basse Hd", value=0.0, min_value=0.0, key="Hd_cn")
+
+        if st.button("Calculer (PDE Barrière)", key="btn_barrier_cn"):
+            barrier_flag = "UNO" if barrier_type.startswith("UNO") else "DNO"
+            price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
+                Typeflag=barrier_flag,
+                cpflag=cpflag_barrier,
+                S0=S0_common,
+                K=K_common,
+                Hu=Hu_cn,
+                Hd=Hd_cn,
+                T=T_common,
+                vol=sigma_common,
+                r=r_common,
+                d=d_common,
+            )
             st.write(f"**Prix**: {price_b:.4f}")
             st.write(f"**Delta**: {delta_b:.4f}")
             st.write(f"**Gamma**: {gamma_b:.4f}")
             st.write(f"**Theta**: {theta_b:.4f}")
 
-
-with tab_longstaff:
-    st.header("Longstaff–Schwartz et autres pricers")
-
-    st.sidebar.header("Paramètres Longstaff")
-    S0_ls = st.sidebar.number_input("S0 (spot) - Longstaff", value=100.0, min_value=0.01, key="S0_ls")
-    K_ls = st.sidebar.number_input("K (strike) - Longstaff", value=100.0, min_value=0.01, key="K_ls")
-    T_ls = st.sidebar.number_input("T (maturité) - Longstaff", value=1.0, min_value=0.01, key="T_ls")
-    is_call_ls = st.sidebar.selectbox("Type d'option - Longstaff", ["Call", "Put"], key="is_call_ls") == "Call"
-
-    mu_ls = st.sidebar.number_input("μ (drift, MC)", value=0.05, key="mu_ls")
-    sigma_ls = st.sidebar.number_input("σ (volatilité, MC/BSM)", value=0.2, min_value=0.0001, key="sigma_ls")
-    r_ls = st.sidebar.number_input("Taux sans risque r (BSM / CRR)", value=0.05, key="r_ls")
-
-    n_paths_ls = st.sidebar.number_input(
-        "Nombre de trajectoires Monte Carlo (n)", value=10_000, min_value=100, key="n_paths_ls"
-    )
-    n_steps_ls = st.sidebar.number_input(
-        "Nombre de pas de temps (m)", value=50, min_value=1, key="n_steps_ls"
-    )
-    n_tree_ls = st.sidebar.number_input(
-        "Nombre de pas de l'arbre CRR", value=250, min_value=10, key="n_tree_ls"
-    )
-
-    process_type_ls = st.sidebar.selectbox(
-        "Processus sous-jacent (Longstaff)", ["Geometric Brownian Motion", "Heston"], key="process_type_ls"
-    )
-
-    if process_type_ls == "Geometric Brownian Motion":
-        process_ls = GeometricBrownianMotion(mu=mu_ls, sigma=sigma_ls)
-        v0_ls = None
-    else:
-        st.sidebar.subheader("Paramètres Heston (Longstaff)")
-        kappa_ls = st.sidebar.number_input("κ (vitesse de rappel)", value=2.0, key="kappa_ls")
-        theta_ls = st.sidebar.number_input("θ (variance long terme)", value=0.04, key="theta_ls")
-        eta_ls = st.sidebar.number_input("η (vol de la variance)", value=0.5, key="eta_ls")
-        rho_ls = st.sidebar.number_input("ρ (corrélation)", value=-0.7, min_value=-0.99, max_value=0.99, key="rho_ls")
-        v0_ls = st.sidebar.number_input("v0 (variance initiale)", value=0.04, min_value=0.0001, key="v0_ls")
-        process_ls = HestonProcess(mu=mu_ls, kappa=kappa_ls, theta=theta_ls, eta=eta_ls, rho=rho_ls)
-
-    option_ls = Option(s0=S0_ls, T=T_ls, K=K_ls, v0=v0_ls, call=is_call_ls)
-
-    tab_mc, tab_ls, tab_bsm, tab_crr = st.tabs(
-        ["Monte Carlo classique", "Longstaff–Schwartz (américaine)", "Black–Scholes–Merton", "Arbre CRR (américaine)"]
-    )
-
-    with tab_mc:
-        st.subheader("Monte Carlo classique")
-        if st.button("Calculer (MC)", key="btn_mc_ls"):
-            price_mc = monte_carlo_simulation(
-                option=option_ls,
-                process=process_ls,
-                n=int(n_paths_ls),
-                m=int(n_steps_ls),
-            )
-            st.write(f"**Prix Monte Carlo**: {price_mc:.4f}")
-
-    with tab_ls:
-        st.subheader("Monte Carlo Longstaff–Schwartz (américaine)")
-        if st.button("Calculer (LS)", key="btn_ls_ls"):
-            price_ls = longstaff_schwartz_price(
-                option=option_ls,
-                process=process_ls,
-                n_paths=int(n_paths_ls),
-                n_steps=int(n_steps_ls),
-            )
-            st.write(f"**Prix Longstaff–Schwartz**: {price_ls:.4f}")
-
-    with tab_bsm:
-        st.subheader("Black–Scholes–Merton (européenne)")
-        if st.button("Calculer (BSM)", key="btn_bsm_ls"):
-            price_bsm = black_scholes_merton(r=r_ls, sigma=sigma_ls, option=option_ls)
-            st.write(f"**Prix BSM**: {price_bsm:.4f}")
-
-    with tab_crr:
-        st.subheader("Arbre CRR (américaine)")
-        if st.button("Calculer (CRR)", key="btn_crr_ls"):
-            price_crr = crr_pricing(r=r_ls, sigma=sigma_ls, option=option_ls, n=int(n_tree_ls))
-            st.write(f"**Prix CRR**: {price_crr:.4f}")
-
-
-with tab_lookback:
-    st.header("Lookback, Barrier & European (Lookback module)")
-
-    st.sidebar.header("Paramètres Lookback")
-    S0_lb = st.sidebar.number_input("S0 (spot) - Lookback", value=100.0, min_value=0.01, key="S0_lb")
-    T_lb = st.sidebar.number_input("T (maturité) - Lookback", value=1.0, min_value=0.01, key="T_lb")
-    t0_lb = st.sidebar.number_input("t (temps courant) - Lookback", value=0.0, min_value=0.0, key="t0_lb")
-    r_lb = st.sidebar.number_input("Taux sans risque r - Lookback", value=0.05, key="r_lb")
-    sigma_lb = st.sidebar.number_input("Volatilité σ - Lookback", value=0.2, min_value=0.0001, key="sigma_lb")
-
-    K_lb = st.sidebar.number_input("K (strike, Euro/Barrière)", value=100.0, min_value=0.01, key="K_lb")
-    B_lb = st.sidebar.number_input("B (barrière up-and-out)", value=120.0, min_value=0.01, key="B_lb")
-
-    n_iters_lb = st.sidebar.number_input(
-        "Itérations Monte Carlo (Lookback)", value=10_000, min_value=100, key="n_iters_lb"
-    )
-    n_t_lb = st.sidebar.number_input("Pas de temps PDE n_t (Lookback)", value=200, min_value=10, key="n_t_lb")
-    n_s_lb = st.sidebar.number_input("Pas d'espace PDE n_s (Lookback)", value=200, min_value=10, key="n_s_lb")
-
-    tab_eu_lb, tab_barrier_lb, tab_lookback_lb = st.tabs(
-        ["European call", "Barrier up-and-out call", "Lookback floating call"]
-    )
-
-    with tab_eu_lb:
-        st.subheader("European call option (Lookback module)")
-        euro_lb = european_call_option(T=T_lb, t=t0_lb, S0=S0_lb, K=K_lb, r=r_lb, sigma=sigma_lb)
-        method_eu_lb = st.selectbox(
-            "Méthode de pricing (Euro)", ["Exacte (BSM)", "Monte Carlo", "PDE Crank–Nicolson"], key="method_eu_lb"
-        )
-
-        if st.button("Calculer (European)", key="btn_eu_lb"):
-            if method_eu_lb == "Exacte (BSM)":
-                price_eu_exact = euro_lb.price_exact()
-                st.write(f"**Prix exact**: {price_eu_exact:.6f}")
-            elif method_eu_lb == "Monte Carlo":
-                price_eu_mc = euro_lb.price_monte_carlo(int(n_iters_lb))
-                st.write(f"**Prix Monte Carlo**: {price_eu_mc:.6f}")
-            else:
-                euro_lb.price_pde(int(n_t_lb), int(n_s_lb))
-                price_eu_pde = euro_lb.get_pde_result(S0_lb)
-                st.write(f"**Prix PDE**: {price_eu_pde:.6f}")
-
     with tab_barrier_lb:
-        st.subheader("Barrier up-and-out call option (Lookback module)")
-        barrier_lb = barrier_call_option(T=T_lb, t=t0_lb, S0=S0_lb, K=K_lb, B=B_lb, r=r_lb, sigma=sigma_lb)
+        st.subheader("Barrière up-and-out (module Lookback)")
+        t_barrier_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t_barrier_lb")
+        B_lb = st.number_input("B (barrière up-and-out)", value=120.0, min_value=0.01, key="B_lb")
         method_barrier_lb = st.selectbox(
-            "Méthode de pricing (Barrière)",
+            "Méthode de pricing",
             ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
             key="method_barrier_lb",
         )
+        n_iters_barrier = None
+        n_t_barrier = None
+        n_s_barrier = None
+        if method_barrier_lb == "Monte Carlo":
+            n_iters_barrier = st.number_input(
+                "Itérations Monte Carlo", value=10_000, min_value=100, key="n_iters_barrier_lb"
+            )
+        elif method_barrier_lb == "PDE Crank–Nicolson":
+            n_t_barrier = st.number_input("Pas de temps PDE n_t", value=200, min_value=10, key="n_t_barrier")
+            n_s_barrier = st.number_input("Pas d'espace PDE n_s", value=200, min_value=10, key="n_s_barrier")
 
-        if st.button("Calculer (Barrière)", key="btn_barrier_lb"):
+        if st.button("Calculer (Barrière UO)", key="btn_barrier_lb"):
+            barrier_lb = barrier_call_option(
+                T=T_common, t=t_barrier_lb, S0=S0_common, K=K_common, B=B_lb, r=r_common, sigma=sigma_common
+            )
             if method_barrier_lb == "Exacte (fermée)":
                 price_barrier_exact = barrier_lb.price_exact()
                 st.write(f"**Prix exact barrière**: {price_barrier_exact:.6f}")
             elif method_barrier_lb == "Monte Carlo":
-                price_barrier_mc = barrier_lb.price_monte_carlo(int(n_iters_lb))
+                price_barrier_mc = barrier_lb.price_monte_carlo(int(n_iters_barrier))
                 st.write(f"**Prix Monte Carlo barrière**: {price_barrier_mc:.6f}")
             else:
-                barrier_lb.price_pde(int(n_t_lb), int(n_s_lb))
-                price_barrier_pde = barrier_lb.get_pde_result(S0_lb)
+                barrier_lb.price_pde(int(n_t_barrier), int(n_s_barrier))
+                price_barrier_pde = barrier_lb.get_pde_result(S0_common)
                 st.write(f"**Prix PDE barrière**: {price_barrier_pde:.6f}")
 
-    with tab_lookback_lb:
-        st.subheader("Lookback call option (floating strike)")
-        lookback_lb = lookback_call_option(T=T_lb, t=t0_lb, S0=S0_lb, r=r_lb, sigma=sigma_lb)
-        method_lb_lb = st.selectbox(
-            "Méthode de pricing (Lookback)", ["Exacte", "Monte Carlo", "PDE Crank–Nicolson"], key="method_lb_lb"
+
+with tab_bermudan:
+    st.header("Option bermudéenne")
+    cpflag_bmd = st.selectbox("Call / Put (bermuda)", ["Call", "Put"], key="cpflag_bmd")
+    cpflag_bmd_char = "c" if cpflag_bmd == "Call" else "p"
+
+    if st.button("Calculer (PDE Bermuda)", key="btn_bmd_cn"):
+        model_bmd = CrankNicolsonBS(
+            Typeflag="Bmd",
+            cpflag=cpflag_bmd_char,
+            S0=S0_common,
+            K=K_common,
+            T=T_common,
+            vol=sigma_common,
+            r=r_common,
+            d=d_common,
         )
-
-        if st.button("Calculer (Lookback)", key="btn_lookback_lb"):
-            if method_lb_lb == "Exacte":
-                price_lb_exact = lookback_lb.price_exact()
-                st.write(f"**Prix exact lookback**: {price_lb_exact:.6f}")
-            elif method_lb_lb == "Monte Carlo":
-                price_lb_mc = lookback_lb.price_monte_carlo(int(n_iters_lb))
-                st.write(f"**Prix Monte Carlo lookback**: {price_lb_mc:.6f}")
-            else:
-                lookback_lb.price_pde(int(n_t_lb), int(n_s_lb))
-                price_lb_pde = lookback_lb.get_pde_result(z=1.0)
-                st.write(f"**Prix PDE lookback**: {price_lb_pde:.6f}")
-
+        price_bmd, delta_bmd, gamma_bmd, theta_bmd = model_bmd.CN_option_info()
+        st.write(f"**Prix**: {price_bmd:.4f}")
+        st.write(f"**Delta**: {delta_bmd:.4f}")
+        st.write(f"**Gamma**: {gamma_bmd:.4f}")
+        st.write(f"**Theta**: {theta_bmd:.4f}")
