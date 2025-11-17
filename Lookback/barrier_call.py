@@ -3,7 +3,7 @@ import math
 from scipy.stats import norm
 
 try:
-    from aux_functions import (
+    from Lookback.aux_functions import (
         const_tri_diag_mat_solve,
         get_result,
         st,

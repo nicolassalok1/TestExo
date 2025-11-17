@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from scipy.stats import norm
-from aux_functions import tri_diag_mat_solve_arr, get_result, st, delta_m, delta_p, cond_prob_M, wiener
+from Lookback.aux_functions import tri_diag_mat_solve_arr, get_result, st, delta_m, delta_p, cond_prob_M, wiener
 
 class lookback_call_option:
     '''
