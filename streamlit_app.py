@@ -1818,32 +1818,29 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
         )
     st.success("Entraînement terminé.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Courbes MSE")
-        fig, ax = plt.subplots(figsize=(6, 3))
-        ax.plot(history.history["mean_squared_error"], label="train")
-        ax.plot(history.history["val_mean_squared_error"], label="val")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("MSE")
-        ax.legend()
-        ax.grid(True, linestyle="--", alpha=0.4)
-        st.pyplot(fig)
+    st.subheader("Courbe MSE NN")
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(history.history["mean_squared_error"], label="train")
+    ax.plot(history.history["val_mean_squared_error"], label="val")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("MSE")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+    st.pyplot(fig)
 
-    with col2:
-        st.subheader("Heatmap prix NN (S vs K)")
-        try:
-            with st.spinner("Calcul de la heatmap…"):
-                heatmap_fig = plot_heatmap_nn(
-                    model=model,
-                    data=df,
-                    spot_ref=float(spot_common),
-                    strike_ref=float(strike_common),
-                    maturity_fixed=1.0,
-                )
-            st.pyplot(heatmap_fig)
-        except Exception as exc:
-            st.warning(f"Impossible d'afficher la heatmap : {exc}")
+    st.subheader("Heatmap prix NN (S vs K)")
+    try:
+        with st.spinner("Calcul de la heatmap…"):
+            heatmap_fig = plot_heatmap_nn(
+                model=model,
+                data=df,
+                spot_ref=float(spot_common),
+                strike_ref=float(strike_common),
+                maturity_fixed=1.0,
+            )
+        st.pyplot(heatmap_fig)
+    except Exception as exc:
+        st.warning(f"Impossible d'afficher la heatmap : {exc}")
 
     st.subheader("Surface IV (Strike, Maturité)")
     try:
@@ -1985,34 +1982,35 @@ def ui_asian_options(
                 prices_call[i_t, i_k] = call_price
                 prices_put[i_t, i_k] = put_price
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    im0 = axes[0].imshow(
+    fig_call, ax_call = plt.subplots(figsize=(7, 4))
+    im0 = ax_call.imshow(
         prices_call,
         origin="lower",
         extent=[k_vals.min(), k_vals.max(), t_vals.min(), t_vals.max()],
         aspect="auto",
         cmap="viridis",
     )
-    axes[0].set_xlabel("Strike K")
-    axes[0].set_ylabel("Maturité T (années)")
-    axes[0].set_title("Call asiatique arithmétique (MC + control variate)")
-    fig.colorbar(im0, ax=axes[0], label="Prix")
+    ax_call.set_xlabel("Strike K")
+    ax_call.set_ylabel("Maturité T (années)")
+    ax_call.set_title("Call asiatique arithmétique (MC + control variate)")
+    fig_call.colorbar(im0, ax=ax_call, label="Prix")
+    fig_call.tight_layout()
+    st.pyplot(fig_call)
 
-    im1 = axes[1].imshow(
+    fig_put, ax_put = plt.subplots(figsize=(7, 4))
+    im1 = ax_put.imshow(
         prices_put,
         origin="lower",
         extent=[k_vals.min(), k_vals.max(), t_vals.min(), t_vals.max()],
         aspect="auto",
         cmap="viridis",
     )
-    axes[1].set_xlabel("Strike K")
-    axes[1].set_ylabel("Maturité T (années)")
-    axes[1].set_title("Put asiatique arithmétique (MC + control variate)")
-    fig.colorbar(im1, ax=axes[1], label="Prix")
-
-    plt.tight_layout()
-    st.pyplot(fig)
+    ax_put.set_xlabel("Strike K")
+    ax_put.set_ylabel("Maturité T (années)")
+    ax_put.set_title("Put asiatique arithmétique (MC + control variate)")
+    fig_put.colorbar(im1, ax=ax_put, label="Prix")
+    fig_put.tight_layout()
+    st.pyplot(fig_put)
 
 
 # ---------------------------------------------------------------------------
