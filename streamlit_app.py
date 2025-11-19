@@ -301,7 +301,14 @@ def _heatmap_axis(center: float, span: float, n_points: int = HEATMAP_GRID_SIZE)
     return np.linspace(lower, upper, n_points)
 
 
-def _render_heatmap(matrix: np.ndarray, x_values: np.ndarray, y_values: np.ndarray, title: str) -> None:
+def _render_heatmap(
+    matrix: np.ndarray,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    title: str,
+    xlabel: str = "Spot",
+    ylabel: str = "Strike",
+) -> None:
     fig, ax = plt.subplots()
     image = ax.imshow(
         matrix,
@@ -310,8 +317,8 @@ def _render_heatmap(matrix: np.ndarray, x_values: np.ndarray, y_values: np.ndarr
         extent=[x_values[0], x_values[-1], y_values[0], y_values[-1]],
         cmap="viridis",
     )
-    ax.set_xlabel("Spot")
-    ax.set_ylabel("Strike")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     ax.set_title(title)
     fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
     st.pyplot(fig)
@@ -448,6 +455,53 @@ def _barrier_monte_carlo_price(
             payoff = max(K - s, 0.0)
         payoffs.append(payoff)
     return discount * (float(np.mean(payoffs)) if payoffs else 0.0)
+
+
+def _compute_barrier_heatmap_matrix(
+    option_type: str,
+    barrier_type: str,
+    strike_values: np.ndarray,
+    offset_values: np.ndarray,
+    S0: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    matrix = np.zeros((len(strike_values), len(offset_values)))
+    ratio_axis = np.zeros(len(offset_values))
+
+    for j, offset in enumerate(offset_values):
+        if barrier_type == "up":
+            ratio = 1.0 + offset
+        else:
+            ratio = max(0.01, 1.0 - offset)
+        ratio_axis[j] = ratio
+
+        for i, strike in enumerate(strike_values):
+            barrier = max(strike * ratio, 0.01)
+            try:
+                price = _barrier_closed_form_price(
+                    option_type=option_type,
+                    barrier_type=barrier_type,
+                    S0=S0,
+                    K=float(strike),
+                    barrier=float(barrier),
+                    T=T,
+                    r=r,
+                    dividend=dividend,
+                    sigma=sigma,
+                )
+            except ValueError:
+                price = 0.0
+            matrix[i, j] = price
+
+    if np.any(np.diff(ratio_axis) < 0):
+        order = np.argsort(ratio_axis)
+        ratio_axis = ratio_axis[order]
+        matrix = matrix[:, order]
+
+    return matrix, ratio_axis
 
 
 def _compute_lookback_exact_heatmap(
@@ -650,7 +704,31 @@ heatmap_span = st.sidebar.number_input(
     key="heatmap_span",
 )
 heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
-heatmap_strike_values = _heatmap_axis(S0_common, heatmap_span)
+heatmap_strike_values = _heatmap_axis(K_common, heatmap_span)
+barrier_up_offset_max = st.sidebar.number_input(
+    "Offset max barrière haute (% du strike)",
+    value=0.5,
+    min_value=0.05,
+    max_value=2.0,
+    step=0.05,
+    help="Contrôle la plage relative des barrières hautes utilisées dans les heatmaps up-and-out.",
+    key="barrier_up_offset_max",
+)
+barrier_down_offset_max = st.sidebar.number_input(
+    "Offset max barrière basse (% du strike)",
+    value=0.5,
+    min_value=0.05,
+    max_value=0.95,
+    step=0.05,
+    help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
+    key="barrier_down_offset_max",
+)
+heatmap_barrier_up_offsets = np.linspace(
+    0.01, max(0.01, float(barrier_up_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
+)
+heatmap_barrier_down_offsets = np.linspace(
+    0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
+)
 heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
 tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
@@ -891,6 +969,27 @@ with tab_barrier:
                 st.write(f"**Delta**: {delta_b:.6f}")
                 st.write(f"**Gamma**: {gamma_b:.6f}")
                 st.write(f"**Theta**: {theta_b:.6f}")
+        with st.spinner("Construction de la heatmap up-and-out"):
+            heatmap_matrix_up, ratio_axis_up = _compute_barrier_heatmap_matrix(
+                option_type=cpflag_barrier_up_char,
+                barrier_type="up",
+                strike_values=heatmap_strike_values,
+                offset_values=heatmap_barrier_up_offsets,
+                S0=S0_common,
+                T=T_common,
+                r=r_common,
+                dividend=d_common,
+                sigma=sigma_common,
+            )
+        st.write("Heatmap Up-and-out (barrière = strike × ratio)")
+        _render_heatmap(
+            heatmap_matrix_up,
+            ratio_axis_up,
+            heatmap_strike_values,
+            f"Prix {cpflag_barrier_up} Up-and-out",
+            xlabel="Ratio barrière / strike",
+            ylabel="Strike",
+        )
 
     with tab_barrier_down:
         st.subheader("Down-and-out")
@@ -964,6 +1063,27 @@ with tab_barrier:
                 st.write(f"**Delta**: {delta_b:.6f}")
                 st.write(f"**Gamma**: {gamma_b:.6f}")
                 st.write(f"**Theta**: {theta_b:.6f}")
+        with st.spinner("Construction de la heatmap down-and-out"):
+            heatmap_matrix_down, ratio_axis_down = _compute_barrier_heatmap_matrix(
+                option_type=cpflag_barrier_down_char,
+                barrier_type="down",
+                strike_values=heatmap_strike_values,
+                offset_values=heatmap_barrier_down_offsets,
+                S0=S0_common,
+                T=T_common,
+                r=r_common,
+                dividend=d_common,
+                sigma=sigma_common,
+            )
+        st.write("Heatmap Down-and-out (barrière = strike × ratio)")
+        _render_heatmap(
+            heatmap_matrix_down,
+            ratio_axis_down,
+            heatmap_strike_values,
+            f"Prix {cpflag_barrier_down} Down-and-out",
+            xlabel="Ratio barrière / strike",
+            ylabel="Strike",
+        )
 
 
 with tab_bermudan:
