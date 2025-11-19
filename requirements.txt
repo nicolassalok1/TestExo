@@ -4,3 +4,6 @@ scipy
 numba
 matplotlib
 ipywidgets
+pandas
+yfinance
+tensorflow
