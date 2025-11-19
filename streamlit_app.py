@@ -1038,7 +1038,6 @@ with tab_bermudan:
             vol=sigma_common,
             r=r_common,
             d=d_common,
-            n_exercise_dates=int(n_ex_dates_bmd),
         )
         price_bmd, delta_bmd, gamma_bmd, theta_bmd = model_bmd.CN_option_info()
         st.write(f"**Prix**: {price_bmd:.4f}")
