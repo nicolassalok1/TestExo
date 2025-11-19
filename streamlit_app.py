@@ -1718,8 +1718,6 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
     if "basket_tickers" not in st.session_state:
         default_list = csv_tickers if csv_tickers else ["AAPL", "SPY", "MSFT"]
         st.session_state["basket_tickers"] = _normalize_tickers(default_list)
-    elif csv_tickers:
-        st.session_state["basket_tickers"] = _normalize_tickers(csv_tickers)
 
     with st.container():
         st.subheader("Sélection des assets (2 à 10)")
@@ -1745,6 +1743,7 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
         if len(tickers) < min_assets:
             tickers += ["SPY"] * (min_assets - len(tickers))
         st.session_state["basket_tickers"] = tickers
+    tickers = st.session_state["basket_tickers"]
 
     period = st.selectbox("Période yfinance", ["1mo", "3mo", "6mo", "1y"], index=0, key="corr_period")
     interval = st.selectbox("Intervalle", ["1d", "1h"], index=0, key="corr_interval")
