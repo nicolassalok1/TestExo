@@ -1687,6 +1687,8 @@ def compute_asian_price(
 
 def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
     st.header("Basket – Pricing NN + corrélation (3 actifs)")
+    
+    st.info("ℹ️ Les tickers sont optionnels. Si aucune donnée de marché n'est disponible, une matrice de corrélation synthétique sera utilisée.")
 
     if "basket_tickers" not in st.session_state:
         st.session_state["basket_tickers"] = ["AAPL", "SPY", "MSFT"]
@@ -1871,25 +1873,20 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
 
 
 def ui_asian_options(
-    ticker,
-    period,
-    interval,
     spot_default,
     sigma_common,
-    hist_df,
     maturity_common,
     strike_common,
     rate_common,
 ):
     st.header("Options asiatiques (module Asian)")
+    
+    st.info("ℹ️ Les options asiatiques utilisent uniquement les paramètres communs. Aucun ticker n'est nécessaire.")
 
     if spot_default is None:
-        st.warning("Aucun téléchargement yfinance : utilisez le spot commun.")
-        spot_default = 57830.0
+        spot_default = 100.0
     if sigma_common is None:
-        sigma_common = 0.05
-    if hist_df is None:
-        hist_df = pd.DataFrame()
+        sigma_common = 0.2
 
     col1, col2 = st.columns(2)
     with col1:
@@ -2042,7 +2039,7 @@ heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Basket & Asian – paramètres communs")
-common_ticker = st.sidebar.text_input("Ticker (scripts yfinance)", value="", key="common_ticker", placeholder="Ex: AAPL")
+common_ticker = st.sidebar.text_input("Ticker (optionnel, pour télécharger données yfinance)", value="", key="common_ticker", placeholder="Ex: AAPL")
 ba_period = "2y"
 ba_interval = "1d"
 fetch_data = st.sidebar.button("Télécharger / actualiser les données (scripts)", key="common_download")
@@ -2060,15 +2057,18 @@ except Exception:
     pass
 
 if fetch_data:
-    try:
-        subprocess.run(
-            [sys.executable, "build_option_prices_csv.py", common_ticker, "--output", "ticker_prices.csv"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except Exception as exc:
-        st.sidebar.warning(f"Impossible d'exécuter build_option_prices_csv.py : {exc}")
+    if not common_ticker or common_ticker.strip() == "":
+        st.sidebar.warning("Veuillez saisir un ticker pour télécharger les données.")
+    else:
+        try:
+            subprocess.run(
+                [sys.executable, "build_option_prices_csv.py", common_ticker, "--output", "ticker_prices.csv"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:
+            st.sidebar.warning(f"Impossible d'exécuter build_option_prices_csv.py : {exc}")
     try:
         opt_csv = pd.read_csv("ticker_prices.csv")
         if not opt_csv.empty:
@@ -2477,12 +2477,8 @@ with tab_basket:
 
 with tab_asian:
     ui_asian_options(
-        ticker=common_ticker,
-        period=ba_period,
-        interval=ba_interval,
         spot_default=common_spot_value,
         sigma_common=common_sigma_value,
-        hist_df=pd.DataFrame(),
         maturity_common=common_maturity_value,
         strike_common=common_strike_value,
         rate_common=common_rate_value,
