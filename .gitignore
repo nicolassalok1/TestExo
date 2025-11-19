@@ -1,5 +1,10 @@
 .streamlit/secrets.toml
 
+# Generated data files
+data/train.csv
+data/test.csv
+ticker_prices.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
