@@ -504,6 +504,43 @@ def _compute_barrier_heatmap_matrix(
     return matrix, ratio_axis
 
 
+def _compute_up_and_out_strike_heatmap(
+    option_type: str,
+    barrier: float,
+    strike_values: np.ndarray,
+    maturity_values: np.ndarray,
+    spot: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> np.ndarray:
+    """
+    Construit une matrice de prix up-and-out selon (T, K) pour un spot fixe.
+    """
+    matrix = np.zeros((len(maturity_values), len(strike_values)))
+    for i, maturity in enumerate(maturity_values):
+        for j, strike in enumerate(strike_values):
+            if strike <= 0.0:
+                matrix[i, j] = 0.0
+                continue
+            try:
+                price = _barrier_closed_form_price(
+                    option_type=option_type,
+                    barrier_type="up",
+                    S0=float(spot),
+                    K=float(strike),
+                    barrier=float(barrier),
+                    T=float(maturity),
+                    r=r,
+                    dividend=dividend,
+                    sigma=sigma,
+                )
+            except ValueError:
+                price = 0.0
+            matrix[i, j] = price
+    return matrix
+
+
 def _compute_lookback_exact_heatmap(
     s_values: np.ndarray,
     t_values: np.ndarray,
@@ -705,30 +742,6 @@ heatmap_span = st.sidebar.number_input(
 )
 heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
 heatmap_strike_values = _heatmap_axis(K_common, heatmap_span)
-barrier_up_offset_max = st.sidebar.number_input(
-    "Offset max barrière haute (% du strike)",
-    value=0.5,
-    min_value=0.05,
-    max_value=2.0,
-    step=0.05,
-    help="Contrôle la plage relative des barrières hautes utilisées dans les heatmaps up-and-out.",
-    key="barrier_up_offset_max",
-)
-barrier_down_offset_max = st.sidebar.number_input(
-    "Offset max barrière basse (% du strike)",
-    value=0.5,
-    min_value=0.05,
-    max_value=0.95,
-    step=0.05,
-    help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
-    key="barrier_down_offset_max",
-)
-heatmap_barrier_up_offsets = np.linspace(
-    0.01, max(0.01, float(barrier_up_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
-)
-heatmap_barrier_down_offsets = np.linspace(
-    0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
-)
 heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
 tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
@@ -905,10 +918,16 @@ with tab_barrier:
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
         Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
+        strike_span_up = st.number_input(
+            "Span strike (axe K)",
+            value=20.0,
+            min_value=0.0,
+            step=1.0,
+            help="Le strike varie de Hu - span à Hu dans la heatmap.",
+            key="strike_span_up",
+        )
         method_barrier_up = st.selectbox(
-            "Méthode de pricing (Up-and-out)",
-            ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
-            key="method_barrier_up",
+            "Méthode de pricing (Up-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_up"
         )
         n_paths_up = None
         n_steps_up = None
@@ -935,7 +954,7 @@ with tab_barrier:
                     st.write(f"**Prix exact barrière**: {price:.6f}")
                 except ValueError as exc:
                     st.error(f"Paramètres invalides pour la formule fermée: {exc}")
-            elif method_barrier_up == "Monte Carlo":
+            else:
                 with st.spinner("Simulation Monte Carlo en cours..."):
                     price = _barrier_monte_carlo_price(
                         option_type=cpflag_barrier_up_char,
@@ -951,44 +970,33 @@ with tab_barrier:
                         n_steps=int(n_steps_up),
                     )
                 st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
-            else:
-                with st.spinner("Résolution PDE (Up-and-out)..."):
-                    price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
-                        Typeflag="UO",
-                        cpflag=cpflag_barrier_up_char,
-                        S0=S0_common,
-                        K=K_common,
-                        Hu=Hu_up,
-                        Hd=0.0,
-                        T=T_common,
-                        vol=sigma_common,
-                        r=r_common,
-                        d=d_common,
-                    )
-                st.write(f"**Prix PDE**: {price_b:.6f}")
-                st.write(f"**Delta**: {delta_b:.6f}")
-                st.write(f"**Gamma**: {gamma_b:.6f}")
-                st.write(f"**Theta**: {theta_b:.6f}")
+
+        strike_axis_up = np.linspace(
+            max(0.01, float(Hu_up) - float(strike_span_up)),
+            float(Hu_up),
+            HEATMAP_GRID_SIZE,
+            endpoint=True,
+        )
         with st.spinner("Construction de la heatmap up-and-out"):
-            heatmap_matrix_up, ratio_axis_up = _compute_barrier_heatmap_matrix(
+            heatmap_matrix_up = _compute_up_and_out_strike_heatmap(
                 option_type=cpflag_barrier_up_char,
-                barrier_type="up",
-                strike_values=heatmap_strike_values,
-                offset_values=heatmap_barrier_up_offsets,
-                S0=S0_common,
-                T=T_common,
+                barrier=Hu_up,
+                strike_values=strike_axis_up,
+                maturity_values=heatmap_maturity_values,
+                spot=S0_common,
                 r=r_common,
                 dividend=d_common,
                 sigma=sigma_common,
             )
-        st.write("Heatmap Up-and-out (barrière = strike × ratio)")
+        st.write("Heatmap Up-and-out (T × K)")
+        st.caption(f"Rappel : S0 = {S0_common:.4f}, Hu = {Hu_up:.4f}")
         _render_heatmap(
             heatmap_matrix_up,
-            ratio_axis_up,
-            heatmap_strike_values,
+            strike_axis_up,
+            heatmap_maturity_values,
             f"Prix {cpflag_barrier_up} Up-and-out",
-            xlabel="Ratio barrière / strike",
-            ylabel="Strike",
+            xlabel="Strike K",
+            ylabel="T (années)",
         )
 
     with tab_barrier_down:
@@ -998,10 +1006,17 @@ with tab_barrier:
         Hd_down = st.number_input(
             "Barrière basse Hd", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down"
         )
+        barrier_down_offset_max = st.number_input(
+            "Offset max barrière basse (% du strike)",
+            value=0.5,
+            min_value=0.05,
+            max_value=0.95,
+            step=0.05,
+            help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
+            key="barrier_down_offset_max",
+        )
         method_barrier_down = st.selectbox(
-            "Méthode de pricing (Down-and-out)",
-            ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
-            key="method_barrier_down",
+            "Méthode de pricing (Down-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_down"
         )
         n_paths_down = None
         n_steps_down = None
@@ -1028,7 +1043,7 @@ with tab_barrier:
                     st.write(f"**Prix exact barrière**: {price:.6f}")
                 except ValueError as exc:
                     st.error(f"Paramètres invalides pour la formule fermée: {exc}")
-            elif method_barrier_down == "Monte Carlo":
+            else:
                 with st.spinner("Simulation Monte Carlo en cours..."):
                     price = _barrier_monte_carlo_price(
                         option_type=cpflag_barrier_down_char,
@@ -1044,25 +1059,10 @@ with tab_barrier:
                         n_steps=int(n_steps_down),
                     )
                 st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
-            else:
-                with st.spinner("Résolution PDE (Down-and-out)..."):
-                    Hu_temp = max(Hd_down * 5.0, S0_common * 3.0, K_common * 3.0)
-                    price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
-                        Typeflag="DO",
-                        cpflag=cpflag_barrier_down_char,
-                        S0=S0_common,
-                        K=K_common,
-                        Hu=Hu_temp,
-                        Hd=Hd_down,
-                        T=T_common,
-                        vol=sigma_common,
-                        r=r_common,
-                        d=d_common,
-                    )
-                st.write(f"**Prix PDE**: {price_b:.6f}")
-                st.write(f"**Delta**: {delta_b:.6f}")
-                st.write(f"**Gamma**: {gamma_b:.6f}")
-                st.write(f"**Theta**: {theta_b:.6f}")
+        
+        heatmap_barrier_down_offsets = np.linspace(
+            0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
+        )
         with st.spinner("Construction de la heatmap down-and-out"):
             heatmap_matrix_down, ratio_axis_down = _compute_barrier_heatmap_matrix(
                 option_type=cpflag_barrier_down_char,
