@@ -167,23 +167,28 @@ def black_scholes_merton(r, sigma, option: Option):
     return np.round(price, 2)
 
 
-def crr_pricing(r=0.1, sigma=0.2, option: Option = Option(s0=100, T=1, K=100, call=False), n=25000):
+def crr_pricing(r=0.1, sigma=0.2, option: Option = Option(s0=100, T=1, K=100, call=False), n=250):
     """
-    Calculate the price of an americain option using a backward tree model
+    Calculate the price of an American option using a Cox–Ross–Rubinstein tree.
     """
+    if n <= 0:
+        raise ValueError("n must be positive for the CRR tree.")
+
     dt = option.T / n
     u = np.exp(sigma * np.sqrt(dt))
     d = 1 / u
     a = np.exp(r * dt)
     p = (a - d) / (u - d)
     q = 1 - p
+    discount = np.exp(-r * dt)
 
-    st = np.array([option.s0 * u**i * d ** (n - i) for i in range(n + 1)])
-    v = np.maximum(option.K - st, 0)
+    asset_prices = np.array([option.s0 * (u**j) * (d ** (n - j)) for j in range(n + 1)])
+    option_values = option.payoff(asset_prices)
 
-    for _ in range(n):
-        v[:-1] = np.exp(-r * dt) * (p * v[1:] + q * v[:-1])
-        st = st * u
-        v = np.maximum(v, option.K - st)
+    for step in range(n - 1, -1, -1):
+        continuation_values = discount * (p * option_values[1:] + q * option_values[:-1])
+        asset_prices = np.array([option.s0 * (u**j) * (d ** (step - j)) for j in range(step + 1)])
+        exercise_values = option.payoff(asset_prices)
+        option_values = np.maximum(exercise_values, continuation_values)
 
-    return np.round(v[0], 3)
+    return float(option_values[0])

@@ -675,7 +675,7 @@ with tab_american:
         st.pyplot(fig_tree)
         plt.close(fig_tree)
         
-        with st.spinner("Calcul des heatmaps CRR"):
+        with st.spinner("Calcul de la heatmap CRR"):
             call_heatmap_crr, put_heatmap_crr = _compute_american_crr_heatmaps(
                 heatmap_spot_values,
                 heatmap_strike_values,
@@ -684,9 +684,12 @@ with tab_american:
                 sigma_common,
                 int_n_tree,
             )
-        _render_call_put_heatmaps(
-            "CRR", call_heatmap_crr, put_heatmap_crr, heatmap_spot_values, heatmap_strike_values
-        )
+        if cpflag_am == "Call":
+            st.write(f"Heatmap {cpflag_am} (CRR)")
+            _render_heatmap(call_heatmap_crr, heatmap_spot_values, heatmap_strike_values, f"{cpflag_am} (CRR)")
+        else:
+            st.write(f"Heatmap {cpflag_am} (CRR)")
+            _render_heatmap(put_heatmap_crr, heatmap_spot_values, heatmap_strike_values, f"{cpflag_am} (CRR)")
 
 
 with tab_lookback:
