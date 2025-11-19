@@ -1050,16 +1050,8 @@ with tab_barrier:
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
         Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
-        strike_span_up = st.number_input(
-            "Span strike (axe K)",
-            value=20.0,
-            min_value=0.0,
-            step=1.0,
-            help="Le strike varie de Hu - span à Hu dans la heatmap.",
-            key="strike_span_up",
-        )
         n_paths_up = st.number_input(
-            "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_up"
+            "Trajectoires Monte Carlo", value=1000, min_value=500, step=500, key="n_paths_barrier_up"
         )
         n_steps_up = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_up")
 
@@ -1080,33 +1072,7 @@ with tab_barrier:
                 )
             st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
 
-        strike_axis_up = np.linspace(
-            max(0.01, float(Hu_up) - float(strike_span_up)),
-            float(Hu_up),
-            HEATMAP_GRID_SIZE,
-            endpoint=True,
-        )
-        with st.spinner("Construction de la heatmap up-and-out"):
-            heatmap_matrix_up = _compute_up_and_out_strike_heatmap(
-                option_type=cpflag_barrier_up_char,
-                barrier=Hu_up,
-                strike_values=strike_axis_up,
-                maturity_values=heatmap_maturity_values,
-                spot=S0_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Up-and-out (T × K)")
         st.caption(f"Rappel : S0 = {S0_common:.4f}, Hu = {Hu_up:.4f}")
-        _render_heatmap(
-            heatmap_matrix_up,
-            strike_axis_up,
-            heatmap_maturity_values,
-            f"Prix {cpflag_barrier_up} Up-and-out",
-            xlabel="Strike K",
-            ylabel="T (années)",
-        )
 
     with tab_barrier_down_out:
         st.subheader("Down-and-out")
@@ -1115,17 +1081,8 @@ with tab_barrier:
         Hd_down = st.number_input(
             "Barrière basse Hd", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down"
         )
-        barrier_down_offset_max = st.number_input(
-            "Offset max barrière basse (% du strike)",
-            value=0.5,
-            min_value=0.05,
-            max_value=0.95,
-            step=0.05,
-            help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
-            key="barrier_down_offset_max",
-        )
         n_paths_down = st.number_input(
-            "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_down"
+            "Trajectoires Monte Carlo", value=1000, min_value=500, step=500, key="n_paths_barrier_down"
         )
         n_steps_down = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_down")
 
@@ -1146,30 +1103,7 @@ with tab_barrier:
                 )
             st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
         
-        heatmap_barrier_down_offsets = np.linspace(
-            0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
-        )
-        with st.spinner("Construction de la heatmap down-and-out"):
-            heatmap_matrix_down, ratio_axis_down = _compute_barrier_heatmap_matrix(
-                option_type=cpflag_barrier_down_char,
-                barrier_type="down",
-                strike_values=heatmap_strike_values,
-                offset_values=heatmap_barrier_down_offsets,
-                S0=S0_common,
-                T=T_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Down-and-out (barrière = strike × ratio)")
-        _render_heatmap(
-            heatmap_matrix_down,
-            ratio_axis_down,
-            heatmap_strike_values,
-            f"Prix {cpflag_barrier_down} Down-and-out",
-            xlabel="Ratio barrière / strike",
-            ylabel="Strike",
-        )
+        st.caption(f"Rappel : S0 = {S0_common:.4f}, Hd = {Hd_down:.4f}")
 
     with tab_barrier_up_in:
         st.subheader("Up-and-in")
@@ -1178,16 +1112,8 @@ with tab_barrier:
         Hu_up_in = st.number_input(
             "Barrière haute Hu (Up-in)", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up_in"
         )
-        strike_span_up_in = st.number_input(
-            "Span strike (Up-in)",
-            value=20.0,
-            min_value=0.0,
-            step=1.0,
-            help="Le strike varie de Hu - span à Hu pour la heatmap knock-in.",
-            key="strike_span_up_in",
-        )
         n_paths_up_in = st.number_input(
-            "Trajectoires Monte Carlo (Up-in)", value=20_000, min_value=500, step=500, key="n_paths_barrier_up_in"
+            "Trajectoires Monte Carlo (Up-in)", value=1000, min_value=500, step=500, key="n_paths_barrier_up_in"
         )
         n_steps_up_in = st.number_input(
             "Pas de temps MC (Up-in)", value=200, min_value=10, key="n_steps_barrier_up_in"
@@ -1211,33 +1137,7 @@ with tab_barrier:
                 )
             st.write(f"**Prix Monte Carlo knock-in**: {price:.6f}")
 
-        strike_axis_up_in = np.linspace(
-            max(0.01, float(Hu_up_in) - float(strike_span_up_in)),
-            float(Hu_up_in),
-            HEATMAP_GRID_SIZE,
-            endpoint=True,
-        )
-        with st.spinner("Construction de la heatmap up-and-in"):
-            heatmap_matrix_up_in = _compute_up_and_in_strike_heatmap(
-                option_type=cpflag_barrier_up_in_char,
-                barrier=Hu_up_in,
-                strike_values=strike_axis_up_in,
-                maturity_values=heatmap_maturity_values,
-                spot=S0_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Up-and-in (T × K)")
         st.caption(f"Rappel : S0 = {S0_common:.4f}, Hu = {Hu_up_in:.4f}")
-        _render_heatmap(
-            heatmap_matrix_up_in,
-            strike_axis_up_in,
-            heatmap_maturity_values,
-            f"Prix {cpflag_barrier_up_in} Up-and-in",
-            xlabel="Strike K",
-            ylabel="T (années)",
-        )
 
     with tab_barrier_down_in:
         st.subheader("Down-and-in")
@@ -1245,15 +1145,6 @@ with tab_barrier:
         cpflag_barrier_down_in_char = "c" if cpflag_barrier_down_in == "Call" else "p"
         Hd_down_in = st.number_input(
             "Barrière basse Hd (Down-in)", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down_in"
-        )
-        barrier_down_offset_max_in = st.number_input(
-            "Offset max barrière basse (Down-in)",
-            value=0.5,
-            min_value=0.05,
-            max_value=0.95,
-            step=0.05,
-            help="Contrôle la plage relative des barrières basses pour la heatmap down-and-in.",
-            key="barrier_down_offset_max_in",
         )
         n_paths_down_in = st.number_input(
             "Trajectoires Monte Carlo (Down-in)",
@@ -1284,29 +1175,6 @@ with tab_barrier:
                 )
             st.write(f"**Prix Monte Carlo knock-in**: {price:.6f}")
 
-        heatmap_barrier_down_offsets_in = np.linspace(
-            0.01, max(0.01, float(barrier_down_offset_max_in)), HEATMAP_GRID_SIZE, endpoint=True
-        )
-        with st.spinner("Construction de la heatmap down-and-in"):
-            heatmap_matrix_down_in, ratio_axis_down_in = _compute_down_in_heatmap(
-                option_type=cpflag_barrier_down_in_char,
-                strike_values=heatmap_strike_values,
-                offset_values=heatmap_barrier_down_offsets_in,
-                S0=S0_common,
-                T=T_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Down-and-in (barrière = strike × ratio)")
-        _render_heatmap(
-            heatmap_matrix_down_in,
-            ratio_axis_down_in,
-            heatmap_strike_values,
-            f"Prix {cpflag_barrier_down_in} Down-and-in",
-            xlabel="Ratio barrière / strike",
-            ylabel="Strike",
-        )
 
 with tab_bermudan:
     st.header("Option bermudéenne")
