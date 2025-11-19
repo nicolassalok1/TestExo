@@ -743,7 +743,7 @@ with tab_barrier:
         barrier_type = st.selectbox(
             "Type de barrière", ["UNO (Up-and-out)", "DNO (Double knock-out)"], key="barrier_type_cn"
         )
-        cpflag_barrier = st.selectbox("Call / Put", ["c", "p"], key="cpflag_barrier_cn")
+        cpflag_barrier = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_cn")
         Hu_cn = st.number_input("Barrière haute Hu", value=120.0, min_value=0.01, key="Hu_cn")
         Hd_cn = st.number_input("Barrière basse Hd", value=0.0, min_value=0.0, key="Hd_cn")
 
