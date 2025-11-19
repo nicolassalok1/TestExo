@@ -302,9 +302,9 @@ tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
 
 with tab_european:
     st.header("Option européenne")
-    cpflag_eu = st.selectbox("Call / Put (européenne)", ["Call", "Put"], key="cpflag_eu")
-    cpflag_eu_char = "c" if cpflag_eu == "Call" else "p"
-    option_eu = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_eu == "Call")
+    cpflag_eu = "Call"
+    cpflag_eu_char = "c"
+    option_eu = Option(s0=S0_common, T=T_common, K=K_common, call=True)
 
     tab_eu_bsm, tab_eu_cn, tab_eu_mc = st.tabs(
         ["Black–Scholes–Merton", "PDE Crank–Nicolson", "Monte Carlo"]
