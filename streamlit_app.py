@@ -2038,6 +2038,12 @@ heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
 heatmap_strike_values = _heatmap_axis(K_common, heatmap_span)
 heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
+st.session_state["common_spot"] = float(S0_common)
+st.session_state["common_strike"] = float(K_common)
+st.session_state["common_maturity"] = float(T_common)
+st.session_state["common_sigma"] = float(sigma_common)
+st.session_state["common_rate"] = float(r_common)
+
 st.sidebar.markdown("---")
 st.sidebar.header("Basket & Asian – paramètres communs")
 common_ticker = st.sidebar.text_input("Ticker (scripts yfinance)", value="", key="common_ticker", placeholder="Ex: AAPL")
@@ -2045,19 +2051,9 @@ ba_period = "2y"
 ba_interval = "1d"
 fetch_data = st.sidebar.button("Télécharger / actualiser les données (scripts)", key="common_download")
 
-spot_from_csv = None
-sigma_from_csv = None
-try:
-    opt_csv = pd.read_csv("ticker_prices.csv")
-    if not opt_csv.empty:
-        if "S0" in opt_csv.columns:
-            spot_from_csv = float(opt_csv["S0"].median())
-        if "iv" in opt_csv.columns:
-            sigma_from_csv = float(opt_csv["iv"].median(skipna=True))
-except Exception:
-    pass
-
 if fetch_data:
+    spot_from_csv = None
+    sigma_from_csv = None
     try:
         subprocess.run(
             [sys.executable, "build_option_prices_csv.py", common_ticker, "--output", "ticker_prices.csv"],
@@ -2072,8 +2068,12 @@ if fetch_data:
         if not opt_csv.empty:
             if "S0" in opt_csv.columns:
                 spot_from_csv = float(opt_csv["S0"].median())
+                st.session_state["S0_common"] = spot_from_csv
+                st.session_state["K_common"] = spot_from_csv
                 st.session_state["common_spot"] = spot_from_csv
                 st.session_state["common_strike"] = spot_from_csv
+                S0_common = spot_from_csv
+                K_common = spot_from_csv
             if "iv" in opt_csv.columns:
                 maturity_target = st.session_state.get("common_maturity", 1.0)
                 calls = opt_csv[opt_csv.get("option_type") == "Call"] if "option_type" in opt_csv.columns else opt_csv
@@ -2084,43 +2084,24 @@ if fetch_data:
                     sigma_from_csv = float(best["iv"]) if pd.notna(best["iv"]) else None
                 else:
                     sigma_from_csv = float(opt_csv["iv"].median(skipna=True))
+                if sigma_from_csv is not None:
+                    st.session_state["sigma_common"] = sigma_from_csv
+                    st.session_state["common_sigma"] = sigma_from_csv
+                    sigma_common = sigma_from_csv
     except Exception:
         pass
 
-spot_seed = spot_from_csv if spot_from_csv is not None else st.session_state.get("common_spot", 100.0)
-common_spot_value = st.sidebar.number_input(
-    "Spot commun S0 (pris pour Basket/Asian)",
-    value=float(spot_seed),
-    min_value=0.01,
-    key="common_spot",
-)
-common_maturity_value = st.sidebar.number_input(
-    "T commun (années, Basket/Asian)",
-    value=float(st.session_state.get("common_maturity", 1.0)),
-    min_value=0.01,
-    key="common_maturity",
-)
-strike_seed = spot_seed
-common_strike_value = st.sidebar.number_input(
-    "Strike commun K (utilisé Basket/Asian)",
-    value=float(strike_seed),
-    min_value=0.01,
-    key="common_strike",
-)
-common_rate_value = st.sidebar.number_input(
-    "Taux sans risque commun r (Basket/Asian)",
-    value=float(st.session_state.get("common_rate", 0.01)),
-    step=0.001,
-    format="%.4f",
-    key="common_rate",
-)
-sigma_seed = sigma_from_csv if sigma_from_csv is not None else st.session_state.get("common_sigma", 0.2)
-common_sigma_value = st.sidebar.number_input(
-    "Volatilité commune σ (Basket/Asian)",
-    value=float(sigma_seed),
-    min_value=0.0001,
-    key="common_sigma",
-)
+common_spot_value = float(S0_common)
+common_maturity_value = float(T_common)
+common_strike_value = float(K_common)
+common_rate_value = float(r_common)
+common_sigma_value = float(sigma_common)
+
+st.session_state["common_spot"] = common_spot_value
+st.session_state["common_maturity"] = common_maturity_value
+st.session_state["common_strike"] = common_strike_value
+st.session_state["common_rate"] = common_rate_value
+st.session_state["common_sigma"] = common_sigma_value
 
 (
     tab_european,
