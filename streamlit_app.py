@@ -1,5 +1,6 @@
 import numpy as np
 import streamlit as st
+import matplotlib.pyplot as plt
 
 from Longstaff.option import Option
 from Longstaff.pricing import (
@@ -281,6 +282,120 @@ def longstaff_schwartz_price(option: Option, process, n_paths: int, n_steps: int
 
 
 # ---------------------------------------------------------------------------
+#  Outils pour les heatmaps européennes
+# ---------------------------------------------------------------------------
+
+HEATMAP_GRID_SIZE = 11
+
+
+def _heatmap_axis(center: float, span: float, n_points: int = HEATMAP_GRID_SIZE) -> np.ndarray:
+    lower = max(0.01, center - span)
+    upper = max(lower, center + span)
+    if np.isclose(lower, upper) or n_points == 1:
+        return np.array([lower])
+    return np.linspace(lower, upper, n_points)
+
+
+def _render_heatmap(matrix: np.ndarray, x_values: np.ndarray, y_values: np.ndarray, title: str) -> None:
+    fig, ax = plt.subplots()
+    image = ax.imshow(
+        matrix,
+        origin="lower",
+        aspect="auto",
+        extent=[x_values[0], x_values[-1], y_values[0], y_values[-1]],
+        cmap="viridis",
+    )
+    ax.set_xlabel("Spot")
+    ax.set_ylabel("Strike")
+    ax.set_title(title)
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def _render_call_put_heatmaps(
+    label: str, call_matrix: np.ndarray, put_matrix: np.ndarray, x_values: np.ndarray, y_values: np.ndarray
+) -> None:
+    col_call, col_put = st.columns(2)
+    with col_call:
+        st.write(f"Heatmap Call ({label})")
+        _render_heatmap(call_matrix, x_values, y_values, f"Call ({label})")
+    with col_put:
+        st.write(f"Heatmap Put ({label})")
+        _render_heatmap(put_matrix, x_values, y_values, f"Put ({label})")
+
+
+def _compute_bsm_heatmaps(
+    s_values: np.ndarray, k_values: np.ndarray, maturity: float, rate: float, sigma: float
+) -> tuple[np.ndarray, np.ndarray]:
+    call_matrix = np.zeros((len(k_values), len(s_values)))
+    put_matrix = np.zeros_like(call_matrix)
+    for i, strike in enumerate(k_values):
+        for j, spot in enumerate(s_values):
+            option_call = Option(s0=spot, T=maturity, K=strike, call=True)
+            option_put = Option(s0=spot, T=maturity, K=strike, call=False)
+            call_matrix[i, j] = black_scholes_merton(r=rate, sigma=sigma, option=option_call)
+            put_matrix[i, j] = black_scholes_merton(r=rate, sigma=sigma, option=option_put)
+    return call_matrix, put_matrix
+
+
+def _compute_cn_heatmaps(
+    s_values: np.ndarray, k_values: np.ndarray, maturity: float, sigma: float, rate: float, dividend: float
+) -> tuple[np.ndarray, np.ndarray]:
+    call_matrix = np.zeros((len(k_values), len(s_values)))
+    put_matrix = np.zeros_like(call_matrix)
+    for i, strike in enumerate(k_values):
+        for j, spot in enumerate(s_values):
+            call_model = CrankNicolsonBS(
+                Typeflag="Eu",
+                cpflag="c",
+                S0=spot,
+                K=strike,
+                T=maturity,
+                vol=sigma,
+                r=rate,
+                d=dividend,
+            )
+            put_model = CrankNicolsonBS(
+                Typeflag="Eu",
+                cpflag="p",
+                S0=spot,
+                K=strike,
+                T=maturity,
+                vol=sigma,
+                r=rate,
+                d=dividend,
+            )
+            call_matrix[i, j] = call_model.CN_option_info()[0]
+            put_matrix[i, j] = put_model.CN_option_info()[0]
+    return call_matrix, put_matrix
+
+
+def _compute_mc_heatmaps(
+    s_values: np.ndarray,
+    k_values: np.ndarray,
+    maturity: float,
+    mu: float,
+    sigma: float,
+    n_paths: int,
+    n_steps: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    process = GeometricBrownianMotion(mu=mu, sigma=sigma)
+    discount = np.exp(-mu * maturity)
+    call_matrix = np.zeros((len(k_values), len(s_values)))
+    put_matrix = np.zeros_like(call_matrix)
+
+    for j, spot in enumerate(s_values):
+        simulated_paths = process.simulate(s0=spot, T=maturity, n=n_paths, m=n_steps, v0=None)
+        terminal_prices = simulated_paths[-1]
+        for i, strike in enumerate(k_values):
+            call_matrix[i, j] = np.mean(np.maximum(terminal_prices - strike, 0)) * discount
+            put_matrix[i, j] = np.mean(np.maximum(strike - terminal_prices, 0)) * discount
+
+    return call_matrix, put_matrix
+
+
+# ---------------------------------------------------------------------------
 #  Application Streamlit unifiée
 # ---------------------------------------------------------------------------
 
@@ -294,6 +409,15 @@ T_common = st.sidebar.number_input("T (maturité, années)", value=1.0, min_valu
 sigma_common = st.sidebar.number_input("Volatilité σ", value=0.2, min_value=0.0001, key="sigma_common")
 r_common = st.sidebar.number_input("Taux sans risque r", value=0.05, key="r_common")
 d_common = st.sidebar.number_input("Dividende continu d", value=0.0, key="d_common")
+heatmap_span = st.sidebar.number_input(
+    "Span autour du spot (heatmaps)",
+    value=25.0,
+    min_value=0.1,
+    help="Définit l'écart symétrique autour du spot utilisé pour les axes Spot / Strike des heatmaps.",
+    key="heatmap_span",
+)
+heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
+heatmap_strike_values = _heatmap_axis(S0_common, heatmap_span)
 
 tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
     ["Européenne", "Américaine", "Lookback", "Barrière", "Bermuda"]
@@ -305,6 +429,10 @@ with tab_european:
     cpflag_eu = st.selectbox("Call / Put (européenne)", ["Call", "Put"], key="cpflag_eu")
     cpflag_eu_char = "c" if cpflag_eu == "Call" else "p"
     option_eu = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_eu == "Call")
+    st.caption(
+        "Les heatmaps affichent les prix call / put sur un carré Spot × Strike centré autour du spot défini dans la"
+        " barre latérale."
+    )
 
     tab_eu_bsm, tab_eu_cn, tab_eu_mc = st.tabs(
         ["Black–Scholes–Merton", "PDE Crank–Nicolson", "Monte Carlo"]
@@ -315,6 +443,14 @@ with tab_european:
         if st.button("Calculer (BSM)", key="btn_eu_bsm"):
             price_bsm = black_scholes_merton(r=r_common - d_common, sigma=sigma_common, option=option_eu)
             st.write(f"**Prix BSM**: {price_bsm:.4f}")
+        call_heatmap_bsm, put_heatmap_bsm = _compute_bsm_heatmaps(
+            heatmap_spot_values,
+            heatmap_strike_values,
+            T_common,
+            r_common - d_common,
+            sigma_common,
+        )
+        _render_call_put_heatmaps("BSM", call_heatmap_bsm, put_heatmap_bsm, heatmap_spot_values, heatmap_strike_values)
 
     with tab_eu_cn:
         st.subheader("PDE Crank–Nicolson")
@@ -334,6 +470,18 @@ with tab_european:
             st.write(f"**Delta**: {delta_cn:.4f}")
             st.write(f"**Gamma**: {gamma_cn:.4f}")
             st.write(f"**Theta**: {theta_cn:.4f}")
+        with st.spinner("Calcul des heatmaps PDE"):
+            call_heatmap_cn, put_heatmap_cn = _compute_cn_heatmaps(
+                heatmap_spot_values,
+                heatmap_strike_values,
+                T_common,
+                sigma_common,
+                r_common,
+                d_common,
+            )
+        _render_call_put_heatmaps(
+            "PDE Crank–Nicolson", call_heatmap_cn, put_heatmap_cn, heatmap_spot_values, heatmap_strike_values
+        )
 
     with tab_eu_mc:
         st.subheader("Monte Carlo classique")
@@ -348,6 +496,19 @@ with tab_european:
                 m=int(n_steps_eu),
             )
             st.write(f"**Prix Monte Carlo**: {price_mc_eu:.4f}")
+        with st.spinner("Calcul des heatmaps Monte Carlo"):
+            call_heatmap_mc, put_heatmap_mc = _compute_mc_heatmaps(
+                heatmap_spot_values,
+                heatmap_strike_values,
+                T_common,
+                r_common - d_common,
+                sigma_common,
+                int(n_paths_eu),
+                int(n_steps_eu),
+            )
+        _render_call_put_heatmaps(
+            "Monte Carlo", call_heatmap_mc, put_heatmap_mc, heatmap_spot_values, heatmap_strike_values
+        )
 
 
 with tab_american:
