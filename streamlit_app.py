@@ -363,6 +363,110 @@ def _compute_mc_heatmaps(
     return call_matrix, put_matrix
 
 
+def _build_crr_tree(option: Option, r: float, sigma: float, n_steps: int) -> tuple[np.ndarray, np.ndarray]:
+    if n_steps <= 0:
+        raise ValueError("n_steps doit être supérieur à 0.")
+    dt = option.T / n_steps
+    u = np.exp(sigma * np.sqrt(dt))
+    d = 1 / u
+    a = np.exp(r * dt)
+    p = (a - d) / (u - d)
+    q = 1 - p
+
+    spot_tree = np.full((n_steps + 1, n_steps + 1), np.nan)
+    value_tree = np.full_like(spot_tree, np.nan)
+
+    for level in range(n_steps + 1):
+        for up_moves in range(level + 1):
+            spot_tree[level, up_moves] = option.s0 * (u**up_moves) * (d ** (level - up_moves))
+
+    payoff_last = option.payoff(spot_tree[n_steps, : n_steps + 1])
+    value_tree[n_steps, : n_steps + 1] = payoff_last
+    discount = np.exp(-r * dt)
+
+    for level in range(n_steps - 1, -1, -1):
+        for up_moves in range(level + 1):
+            continuation = discount * (
+                p * value_tree[level + 1, up_moves + 1] + q * value_tree[level + 1, up_moves]
+            )
+            exercise = option.payoff(np.array([spot_tree[level, up_moves]]))[0]
+            value_tree[level, up_moves] = max(exercise, continuation)
+
+    return spot_tree, value_tree
+
+
+def _format_tree_matrix(matrix: np.ndarray, precision: int = 4) -> np.ndarray:
+    fmt = f"{{:.{precision}f}}"
+    formatted = []
+    for row in matrix:
+        formatted.append([fmt.format(value) if not np.isnan(value) else "" for value in row])
+    return np.array(formatted)
+
+
+def _plot_crr_tree(spots: np.ndarray, values: np.ndarray) -> plt.Figure:
+    n_levels = spots.shape[0]
+    fig_width = min(12, 4 + n_levels * 0.25)
+    fig_height = min(10, 3 + n_levels * 0.25)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.set_axis_off()
+
+    def _node_coords(level: int, index: int) -> tuple[float, float]:
+        x = index - level / 2
+        y = n_levels - 1 - level
+        return x, y
+
+    for level in range(n_levels - 1):
+        for index in range(level + 1):
+            if np.isnan(spots[level, index]):
+                continue
+            x_curr, y_curr = _node_coords(level, index)
+            x_down, y_down = _node_coords(level + 1, index)
+            x_up, y_up = _node_coords(level + 1, index + 1)
+            ax.plot([x_curr, x_down], [y_curr, y_down], color="lightgray", linewidth=0.8)
+            ax.plot([x_curr, x_up], [y_curr, y_up], color="lightgray", linewidth=0.8)
+
+    x_coords = []
+    y_coords = []
+    color_values = []
+    spots_list = []
+    option_list = []
+
+    for level in range(n_levels):
+        for index in range(level + 1):
+            value = spots[level, index]
+            option_value = values[level, index]
+            if np.isnan(value) or np.isnan(option_value):
+                continue
+            x, y = _node_coords(level, index)
+            x_coords.append(x)
+            y_coords.append(y)
+            color_values.append(option_value)
+            spots_list.append(value)
+            option_list.append(option_value)
+
+    scatter = ax.scatter(
+        x_coords,
+        y_coords,
+        c=color_values,
+        cmap="viridis",
+        s=120,
+        edgecolors="black",
+        linewidths=0.5,
+    )
+    display_labels = n_levels - 1 <= 10
+    if display_labels:
+        for x, y, spot_value, option_value in zip(x_coords, y_coords, spots_list, option_list):
+            ax.text(x, y + 0.25, f"S={spot_value:.2f}", ha="center", va="bottom", fontsize=7)
+            ax.text(x, y - 0.25, f"V={option_value:.2f}", ha="center", va="top", fontsize=7)
+
+    ax.set_ylim(-0.5, n_levels - 0.5)
+    ax.set_xlim(min(x_coords, default=-1) - 1, max(x_coords, default=1) + 1)
+    ax.set_title("Arbre CRR (couleur = valeur de l'option)")
+    fig.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04, label="Valeur de l'option")
+    fig.tight_layout()
+    return fig
+
+
 # ---------------------------------------------------------------------------
 #  Application Streamlit unifiée
 # ---------------------------------------------------------------------------
@@ -438,8 +542,8 @@ with tab_american:
     cpflag_am = st.selectbox("Call / Put (américaine)", ["Call", "Put"], key="cpflag_am")
     cpflag_am_char = "c" if cpflag_am == "Call" else "p"
 
-    tab_am_ls, tab_am_crr, tab_am_cn = st.tabs(
-        ["Longstaff–Schwartz", "Arbre CRR", "PDE Crank–Nicolson"]
+    tab_am_ls, tab_am_crr = st.tabs(
+        ["Longstaff–Schwartz", "Arbre CRR"]
     )
 
     with tab_am_ls:
@@ -475,30 +579,22 @@ with tab_american:
 
     with tab_am_crr:
         st.subheader("Arbre binomial CRR")
-        n_tree_am = st.number_input("Nombre de pas de l'arbre", value=250, min_value=10, key="n_tree_am")
+        n_tree_am = st.number_input("Nombre de pas de l'arbre", value=10, min_value=5, key="n_tree_am")
+        option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
         if st.button("Calculer (CRR)", key="btn_am_crr"):
-            option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
             price_crr = crr_pricing(r=r_common, sigma=sigma_common, option=option_am_crr, n=int(n_tree_am))
             st.write(f"**Prix CRR**: {price_crr:.4f}")
-
-    with tab_am_cn:
-        st.subheader("PDE Crank–Nicolson (américaine)")
-        if st.button("Calculer (PDE Am)", key="btn_am_cn"):
-            model_am = CrankNicolsonBS(
-                Typeflag="Am",
-                cpflag=cpflag_am_char,
-                S0=S0_common,
-                K=K_common,
-                T=T_common,
-                vol=sigma_common,
-                r=r_common,
-                d=d_common,
+        int_n_tree = int(n_tree_am)
+        if int_n_tree > 10:
+            st.info("L'affichage peut devenir difficile à lire pour un nombre de pas supérieur à 10.")
+        with st.spinner("Construction de l'arbre CRR"):
+            spot_tree, value_tree = _build_crr_tree(
+                option=option_am_crr, r=r_common, sigma=sigma_common, n_steps=int_n_tree
             )
-            price_am, delta_am, gamma_am, theta_am = model_am.CN_option_info()
-            st.write(f"**Prix**: {price_am:.4f}")
-            st.write(f"**Delta**: {delta_am:.4f}")
-            st.write(f"**Gamma**: {gamma_am:.4f}")
-            st.write(f"**Theta**: {theta_am:.4f}")
+        st.write("**Représentation graphique**")
+        fig_tree = _plot_crr_tree(spot_tree, value_tree)
+        st.pyplot(fig_tree)
+        plt.close(fig_tree)
 
 
 with tab_lookback:
