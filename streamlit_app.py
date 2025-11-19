@@ -375,6 +375,28 @@ def _compute_mc_heatmaps(
     return call_matrix, put_matrix
 
 
+def _vanilla_price_with_dividend(
+    option_type: str,
+    S0: float,
+    K: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> float:
+    if T <= 0 or sigma <= 0 or K <= 0 or S0 <= 0:
+        intrinsic = max(S0 - K, 0.0) if option_type.lower() in {"call", "c"} else max(K - S0, 0.0)
+        return float(intrinsic)
+    sqrt_T = sigma * np.sqrt(T)
+    d1 = (np.log(S0 / K) + (r - dividend + 0.5 * sigma * sigma) * T) / sqrt_T
+    d2 = d1 - sqrt_T
+    if option_type.lower() in {"call", "c"}:
+        price = S0 * np.exp(-dividend * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    else:
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S0 * np.exp(-dividend * T) * norm.cdf(-d1)
+    return float(max(price, 0.0))
+
+
 def _barrier_closed_form_price(
     option_type: str,
     barrier_type: str,
@@ -408,6 +430,34 @@ def _barrier_closed_form_price(
     term2 = phi * K * np.exp(-r * T) * (norm.cdf(phi * x1 - phi * sigma_sqrt_T) - power2 * norm.cdf(eta * y1 - eta * sigma_sqrt_T))
     price = term1 - term2
     return max(float(price), 0.0)
+ 
+
+def _knock_in_closed_form_price(
+    option_type: str,
+    barrier_type: str,
+    S0: float,
+    K: float,
+    barrier: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> float:
+    vanilla = _vanilla_price_with_dividend(
+        option_type=option_type, S0=S0, K=K, T=T, r=r, dividend=dividend, sigma=sigma
+    )
+    barrier_out_price = _barrier_closed_form_price(
+        option_type=option_type,
+        barrier_type=barrier_type,
+        S0=S0,
+        K=K,
+        barrier=barrier,
+        T=T,
+        r=r,
+        dividend=dividend,
+        sigma=sigma,
+    )
+    return max(vanilla - barrier_out_price, 0.0)
 
 
 def _barrier_monte_carlo_price(
@@ -422,12 +472,18 @@ def _barrier_monte_carlo_price(
     sigma: float,
     n_paths: int,
     n_steps: int,
+    knock_in: bool = False,
 ) -> float:
     if barrier <= 0 or n_paths <= 0 or n_steps <= 0:
         raise ValueError("Paramètres invalides pour le Monte Carlo barrière.")
+    option_type_lower = option_type.lower()
     if barrier_type == "up" and S0 >= barrier:
+        if knock_in:
+            return _vanilla_price_with_dividend(option_type=option_type, S0=S0, K=K, T=T, r=r, dividend=dividend, sigma=sigma)
         return 0.0
     if barrier_type == "down" and S0 <= barrier:
+        if knock_in:
+            return _vanilla_price_with_dividend(option_type=option_type, S0=S0, K=K, T=T, r=r, dividend=dividend, sigma=sigma)
         return 0.0
     dt = T / n_steps
     drift = (r - dividend - 0.5 * sigma * sigma) * dt
@@ -436,20 +492,25 @@ def _barrier_monte_carlo_price(
     payoffs = []
     for _ in range(n_paths):
         s = S0
-        knocked_out = False
+        barrier_hit = False
         for _ in range(n_steps):
             z = np.random.normal()
             s *= np.exp(drift + diffusion * z)
             if barrier_type == "up" and s >= barrier:
-                knocked_out = True
-                break
-            if barrier_type == "down" and s <= barrier:
-                knocked_out = True
-                break
-        if knocked_out:
+                barrier_hit = True
+                if not knock_in:
+                    break
+            elif barrier_type == "down" and s <= barrier:
+                barrier_hit = True
+                if not knock_in:
+                    break
+        if knock_in and not barrier_hit:
             payoffs.append(0.0)
             continue
-        if option_type.lower() in {"call", "c"}:
+        if not knock_in and barrier_hit:
+            payoffs.append(0.0)
+            continue
+        if option_type_lower in {"call", "c"}:
             payoff = max(s - K, 0.0)
         else:
             payoff = max(K - s, 0.0)
@@ -541,6 +602,42 @@ def _compute_up_and_out_strike_heatmap(
     return matrix
 
 
+def _compute_up_and_in_strike_heatmap(
+    option_type: str,
+    barrier: float,
+    strike_values: np.ndarray,
+    maturity_values: np.ndarray,
+    spot: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> np.ndarray:
+    matrix = np.zeros((len(maturity_values), len(strike_values)))
+    for i, maturity in enumerate(maturity_values):
+        for j, strike in enumerate(strike_values):
+            if strike <= 0.0:
+                matrix[i, j] = 0.0
+                continue
+            vanilla = _vanilla_price_with_dividend(option_type, spot, float(strike), float(maturity), r, dividend, sigma)
+            try:
+                barrier_out = _barrier_closed_form_price(
+                    option_type=option_type,
+                    barrier_type="up",
+                    S0=float(spot),
+                    K=float(strike),
+                    barrier=float(barrier),
+                    T=float(maturity),
+                    r=r,
+                    dividend=dividend,
+                    sigma=sigma,
+                )
+            except ValueError:
+                matrix[i, j] = 0.0
+                continue
+            matrix[i, j] = max(vanilla - barrier_out, 0.0)
+    return matrix
+
+
 def _compute_lookback_exact_heatmap(
     s_values: np.ndarray,
     t_values: np.ndarray,
@@ -574,6 +671,36 @@ def _compute_lookback_mc_heatmap(
             )
             matrix[i, j] = lookback_opt.price_monte_carlo(n_iters)
     return matrix
+
+
+def _compute_down_in_heatmap(
+    option_type: str,
+    strike_values: np.ndarray,
+    offset_values: np.ndarray,
+    S0: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    matrix_out, ratio_axis = _compute_barrier_heatmap_matrix(
+        option_type=option_type,
+        barrier_type="down",
+        strike_values=strike_values,
+        offset_values=offset_values,
+        S0=S0,
+        T=T,
+        r=r,
+        dividend=dividend,
+        sigma=sigma,
+    )
+    matrix_in = np.zeros_like(matrix_out)
+    for i, strike in enumerate(strike_values):
+        vanilla = _vanilla_price_with_dividend(
+            option_type=option_type, S0=S0, K=float(strike), T=T, r=r, dividend=dividend, sigma=sigma
+        )
+        matrix_in[i, :] = np.maximum(vanilla - matrix_out[i, :], 0.0)
+    return matrix_in, ratio_axis
 
 
 def _compute_american_ls_heatmaps(
@@ -911,9 +1038,14 @@ with tab_lookback:
 
 with tab_barrier:
     st.header("Options barrière")
-    tab_barrier_up, tab_barrier_down = st.tabs(["Up-and-out", "Down-and-out"])
+    (
+        tab_barrier_up_out,
+        tab_barrier_down_out,
+        tab_barrier_up_in,
+        tab_barrier_down_in,
+    ) = st.tabs(["Up-and-out", "Down-and-out", "Up-and-in", "Down-and-in"])
 
-    with tab_barrier_up:
+    with tab_barrier_up_out:
         st.subheader("Up-and-out")
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
@@ -926,50 +1058,27 @@ with tab_barrier:
             help="Le strike varie de Hu - span à Hu dans la heatmap.",
             key="strike_span_up",
         )
-        method_barrier_up = st.selectbox(
-            "Méthode de pricing (Up-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_up"
+        n_paths_up = st.number_input(
+            "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_up"
         )
-        n_paths_up = None
-        n_steps_up = None
-        if method_barrier_up == "Monte Carlo":
-            n_paths_up = st.number_input(
-                "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_up"
-            )
-            n_steps_up = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_up")
+        n_steps_up = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_up")
 
         if st.button("Calculer (Up-and-out)", key="btn_barrier_up"):
-            if method_barrier_up == "Exacte (fermée)":
-                try:
-                    price = _barrier_closed_form_price(
-                        option_type=cpflag_barrier_up_char,
-                        barrier_type="up",
-                        S0=S0_common,
-                        K=K_common,
-                        barrier=Hu_up,
-                        T=T_common,
-                        r=r_common,
-                        dividend=d_common,
-                        sigma=sigma_common,
-                    )
-                    st.write(f"**Prix exact barrière**: {price:.6f}")
-                except ValueError as exc:
-                    st.error(f"Paramètres invalides pour la formule fermée: {exc}")
-            else:
-                with st.spinner("Simulation Monte Carlo en cours..."):
-                    price = _barrier_monte_carlo_price(
-                        option_type=cpflag_barrier_up_char,
-                        barrier_type="up",
-                        S0=S0_common,
-                        K=K_common,
-                        barrier=Hu_up,
-                        T=T_common,
-                        r=r_common,
-                        dividend=d_common,
-                        sigma=sigma_common,
-                        n_paths=int(n_paths_up),
-                        n_steps=int(n_steps_up),
-                    )
-                st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
+            with st.spinner("Simulation Monte Carlo en cours..."):
+                price = _barrier_monte_carlo_price(
+                    option_type=cpflag_barrier_up_char,
+                    barrier_type="up",
+                    S0=S0_common,
+                    K=K_common,
+                    barrier=Hu_up,
+                    T=T_common,
+                    r=r_common,
+                    dividend=d_common,
+                    sigma=sigma_common,
+                    n_paths=int(n_paths_up),
+                    n_steps=int(n_steps_up),
+                )
+            st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
 
         strike_axis_up = np.linspace(
             max(0.01, float(Hu_up) - float(strike_span_up)),
@@ -999,7 +1108,7 @@ with tab_barrier:
             ylabel="T (années)",
         )
 
-    with tab_barrier_down:
+    with tab_barrier_down_out:
         st.subheader("Down-and-out")
         cpflag_barrier_down = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down")
         cpflag_barrier_down_char = "c" if cpflag_barrier_down == "Call" else "p"
@@ -1015,50 +1124,27 @@ with tab_barrier:
             help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
             key="barrier_down_offset_max",
         )
-        method_barrier_down = st.selectbox(
-            "Méthode de pricing (Down-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_down"
+        n_paths_down = st.number_input(
+            "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_down"
         )
-        n_paths_down = None
-        n_steps_down = None
-        if method_barrier_down == "Monte Carlo":
-            n_paths_down = st.number_input(
-                "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_down"
-            )
-            n_steps_down = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_down")
+        n_steps_down = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_down")
 
         if st.button("Calculer (Down-and-out)", key="btn_barrier_down"):
-            if method_barrier_down == "Exacte (fermée)":
-                try:
-                    price = _barrier_closed_form_price(
-                        option_type=cpflag_barrier_down_char,
-                        barrier_type="down",
-                        S0=S0_common,
-                        K=K_common,
-                        barrier=Hd_down,
-                        T=T_common,
-                        r=r_common,
-                        dividend=d_common,
-                        sigma=sigma_common,
-                    )
-                    st.write(f"**Prix exact barrière**: {price:.6f}")
-                except ValueError as exc:
-                    st.error(f"Paramètres invalides pour la formule fermée: {exc}")
-            else:
-                with st.spinner("Simulation Monte Carlo en cours..."):
-                    price = _barrier_monte_carlo_price(
-                        option_type=cpflag_barrier_down_char,
-                        barrier_type="down",
-                        S0=S0_common,
-                        K=K_common,
-                        barrier=Hd_down,
-                        T=T_common,
-                        r=r_common,
-                        dividend=d_common,
-                        sigma=sigma_common,
-                        n_paths=int(n_paths_down),
-                        n_steps=int(n_steps_down),
-                    )
-                st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
+            with st.spinner("Simulation Monte Carlo en cours..."):
+                price = _barrier_monte_carlo_price(
+                    option_type=cpflag_barrier_down_char,
+                    barrier_type="down",
+                    S0=S0_common,
+                    K=K_common,
+                    barrier=Hd_down,
+                    T=T_common,
+                    r=r_common,
+                    dividend=d_common,
+                    sigma=sigma_common,
+                    n_paths=int(n_paths_down),
+                    n_steps=int(n_steps_down),
+                )
+            st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
         
         heatmap_barrier_down_offsets = np.linspace(
             0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
@@ -1085,6 +1171,142 @@ with tab_barrier:
             ylabel="Strike",
         )
 
+    with tab_barrier_up_in:
+        st.subheader("Up-and-in")
+        cpflag_barrier_up_in = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up_in")
+        cpflag_barrier_up_in_char = "c" if cpflag_barrier_up_in == "Call" else "p"
+        Hu_up_in = st.number_input(
+            "Barrière haute Hu (Up-in)", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up_in"
+        )
+        strike_span_up_in = st.number_input(
+            "Span strike (Up-in)",
+            value=20.0,
+            min_value=0.0,
+            step=1.0,
+            help="Le strike varie de Hu - span à Hu pour la heatmap knock-in.",
+            key="strike_span_up_in",
+        )
+        n_paths_up_in = st.number_input(
+            "Trajectoires Monte Carlo (Up-in)", value=20_000, min_value=500, step=500, key="n_paths_barrier_up_in"
+        )
+        n_steps_up_in = st.number_input(
+            "Pas de temps MC (Up-in)", value=200, min_value=10, key="n_steps_barrier_up_in"
+        )
+
+        if st.button("Calculer (Up-and-in)", key="btn_barrier_up_in"):
+            with st.spinner("Monte Carlo knock-in (Up)..."):
+                price = _barrier_monte_carlo_price(
+                    option_type=cpflag_barrier_up_in_char,
+                    barrier_type="up",
+                    S0=S0_common,
+                    K=K_common,
+                    barrier=Hu_up_in,
+                    T=T_common,
+                    r=r_common,
+                    dividend=d_common,
+                    sigma=sigma_common,
+                    n_paths=int(n_paths_up_in),
+                    n_steps=int(n_steps_up_in),
+                    knock_in=True,
+                )
+            st.write(f"**Prix Monte Carlo knock-in**: {price:.6f}")
+
+        strike_axis_up_in = np.linspace(
+            max(0.01, float(Hu_up_in) - float(strike_span_up_in)),
+            float(Hu_up_in),
+            HEATMAP_GRID_SIZE,
+            endpoint=True,
+        )
+        with st.spinner("Construction de la heatmap up-and-in"):
+            heatmap_matrix_up_in = _compute_up_and_in_strike_heatmap(
+                option_type=cpflag_barrier_up_in_char,
+                barrier=Hu_up_in,
+                strike_values=strike_axis_up_in,
+                maturity_values=heatmap_maturity_values,
+                spot=S0_common,
+                r=r_common,
+                dividend=d_common,
+                sigma=sigma_common,
+            )
+        st.write("Heatmap Up-and-in (T × K)")
+        st.caption(f"Rappel : S0 = {S0_common:.4f}, Hu = {Hu_up_in:.4f}")
+        _render_heatmap(
+            heatmap_matrix_up_in,
+            strike_axis_up_in,
+            heatmap_maturity_values,
+            f"Prix {cpflag_barrier_up_in} Up-and-in",
+            xlabel="Strike K",
+            ylabel="T (années)",
+        )
+
+    with tab_barrier_down_in:
+        st.subheader("Down-and-in")
+        cpflag_barrier_down_in = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down_in")
+        cpflag_barrier_down_in_char = "c" if cpflag_barrier_down_in == "Call" else "p"
+        Hd_down_in = st.number_input(
+            "Barrière basse Hd (Down-in)", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down_in"
+        )
+        barrier_down_offset_max_in = st.number_input(
+            "Offset max barrière basse (Down-in)",
+            value=0.5,
+            min_value=0.05,
+            max_value=0.95,
+            step=0.05,
+            help="Contrôle la plage relative des barrières basses pour la heatmap down-and-in.",
+            key="barrier_down_offset_max_in",
+        )
+        n_paths_down_in = st.number_input(
+            "Trajectoires Monte Carlo (Down-in)",
+            value=1000,
+            min_value=500,
+            step=500,
+            key="n_paths_barrier_down_in",
+        )
+        n_steps_down_in = st.number_input(
+            "Pas de temps MC (Down-in)", value=200, min_value=10, key="n_steps_barrier_down_in"
+        )
+
+        if st.button("Calculer (Down-and-in)", key="btn_barrier_down_in"):
+            with st.spinner("Monte Carlo knock-in (Down)..."):
+                price = _barrier_monte_carlo_price(
+                    option_type=cpflag_barrier_down_in_char,
+                    barrier_type="down",
+                    S0=S0_common,
+                    K=K_common,
+                    barrier=Hd_down_in,
+                    T=T_common,
+                    r=r_common,
+                    dividend=d_common,
+                    sigma=sigma_common,
+                    n_paths=int(n_paths_down_in),
+                    n_steps=int(n_steps_down_in),
+                    knock_in=True,
+                )
+            st.write(f"**Prix Monte Carlo knock-in**: {price:.6f}")
+
+        heatmap_barrier_down_offsets_in = np.linspace(
+            0.01, max(0.01, float(barrier_down_offset_max_in)), HEATMAP_GRID_SIZE, endpoint=True
+        )
+        with st.spinner("Construction de la heatmap down-and-in"):
+            heatmap_matrix_down_in, ratio_axis_down_in = _compute_down_in_heatmap(
+                option_type=cpflag_barrier_down_in_char,
+                strike_values=heatmap_strike_values,
+                offset_values=heatmap_barrier_down_offsets_in,
+                S0=S0_common,
+                T=T_common,
+                r=r_common,
+                dividend=d_common,
+                sigma=sigma_common,
+            )
+        st.write("Heatmap Down-and-in (barrière = strike × ratio)")
+        _render_heatmap(
+            heatmap_matrix_down_in,
+            ratio_axis_down_in,
+            heatmap_strike_values,
+            f"Prix {cpflag_barrier_down_in} Down-and-in",
+            xlabel="Ratio barrière / strike",
+            ylabel="Strike",
+        )
 
 with tab_bermudan:
     st.header("Option bermudéenne")
