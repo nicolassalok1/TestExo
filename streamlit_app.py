@@ -473,9 +473,9 @@ def _compute_barrier_heatmap_matrix(
 
     for j, offset in enumerate(offset_values):
         if barrier_type == "up":
-            ratio = 1.0 + offset
+            ratio = 1.1 + offset
         else:
-            ratio = max(0.01, 1.0 - offset)
+            ratio = max(0.01, 0.9 - offset)
         ratio_axis[j] = ratio
 
         for i, strike in enumerate(strike_values):
@@ -904,7 +904,7 @@ with tab_barrier:
         st.subheader("Up-and-out")
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
-        Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=0.01, key="Hu_up")
+        Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
         method_barrier_up = st.selectbox(
             "Méthode de pricing (Up-and-out)",
             ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
