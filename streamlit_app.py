@@ -1128,6 +1128,22 @@ def compute_corr_from_prices(prices_df: pd.DataFrame):
     return returns.corr()
 
 
+def load_closing_prices_with_tickers(path: Path) -> tuple[pd.DataFrame | None, list[str]]:
+    if not path.exists():
+        return None, []
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return None, []
+    ticker_cols: list[str] = []
+    for col in df.columns:
+        col_str = str(col).strip()
+        if not col_str or col_str.lower() == "date":
+            continue
+        ticker_cols.append(col_str)
+    return df, ticker_cols
+
+
 class BasketOption:
     def __init__(self, weights, prices, volatility, corr, strike, maturity, rate):
         self.weights = weights
@@ -1688,10 +1704,23 @@ def compute_asian_price(
 def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
     st.header("Basket – Pricing NN + corrélation (3 actifs)")
 
-    if "basket_tickers" not in st.session_state:
-        st.session_state["basket_tickers"] = ["AAPL", "SPY", "MSFT"]
-
     min_assets, max_assets = 2, 10
+    closing_path = Path("data/closing_prices.csv")
+    prices_df_cached, csv_tickers = load_closing_prices_with_tickers(closing_path)
+
+    def _normalize_tickers(candidates: list[str]) -> list[str]:
+        cleaned = [str(tk).strip().upper() for tk in candidates if str(tk).strip()]
+        trimmed = cleaned[:max_assets]
+        if len(trimmed) < min_assets:
+            trimmed += ["SPY"] * (min_assets - len(trimmed))
+        return trimmed
+
+    if "basket_tickers" not in st.session_state:
+        default_list = csv_tickers if csv_tickers else ["AAPL", "SPY", "MSFT"]
+        st.session_state["basket_tickers"] = _normalize_tickers(default_list)
+    elif csv_tickers:
+        st.session_state["basket_tickers"] = _normalize_tickers(csv_tickers)
+
     with st.container():
         st.subheader("Sélection des assets (2 à 10)")
         btn_col_add, btn_col_remove = st.columns(2)
@@ -1711,7 +1740,7 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
             col = cols[i % 3]
             with col:
                 tick = st.text_input(f"Ticker {i + 1}", value=default_tk, key=f"corr_tk_dynamic_{i}")
-                tickers.append(tick.strip() or default_tk)
+                tickers.append(tick.strip().upper() or default_tk)
         tickers = tickers[:max_assets]
         if len(tickers) < min_assets:
             tickers += ["SPY"] * (min_assets - len(tickers))
@@ -1724,20 +1753,26 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
         "Le calcul de corrélation utilise les prix de clôture présents dans data/closing_prices.csv (générés via le script). "
         "En cas d'échec, une matrice de corrélation inventée sera utilisée."
     )
-    regen_csv = st.button("Regénérer closing_prices.csv", key="btn_regen_closing")
+    regen_csv = st.button("Mettre à jour la Matrice de Corrélation", key="btn_regen_closing")
     try:
-        if regen_csv or not Path("data/closing_prices.csv").exists():
+        if regen_csv or not closing_path.exists():
             cmd = [sys.executable, "fetch_closing_prices.py", "--tickers", *tickers, "--output", "data/closing_prices.csv"]
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             st.info(f"data/closing_prices.csv généré via le script ({res.stdout.strip()})")
+            prices_df_cached, csv_tickers = load_closing_prices_with_tickers(closing_path)
+            if csv_tickers:
+                st.session_state["basket_tickers"] = _normalize_tickers(csv_tickers)
+                tickers = st.session_state["basket_tickers"]
     except Exception as exc:
         st.warning(f"Impossible d'exécuter fetch_closing_prices.py : {exc}")
 
     corr_df = None
     try:
-        closing_path = Path("data/closing_prices.csv")
-        prices = pd.read_csv(closing_path)
-        corr_df = compute_corr_from_prices(prices)
+        if prices_df_cached is None:
+            prices_df_cached, _ = load_closing_prices_with_tickers(closing_path)
+        if prices_df_cached is None:
+            raise FileNotFoundError("Impossible de charger data/closing_prices.csv.")
+        corr_df = compute_corr_from_prices(prices_df_cached)
         st.success(f"Corrélation calculée à partir de {closing_path.name}")
         st.dataframe(corr_df)
     except Exception as exc:
@@ -1868,12 +1903,8 @@ def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
 
 
 def ui_asian_options(
-    ticker,
-    period,
-    interval,
     spot_default,
     sigma_common,
-    hist_df,
     maturity_common,
     strike_common,
     rate_common,
@@ -1885,8 +1916,6 @@ def ui_asian_options(
         spot_default = 57830.0
     if sigma_common is None:
         sigma_common = 0.05
-    if hist_df is None:
-        hist_df = pd.DataFrame()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -2038,59 +2067,6 @@ heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
 heatmap_strike_values = _heatmap_axis(K_common, heatmap_span)
 heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
-st.session_state["common_spot"] = float(S0_common)
-st.session_state["common_strike"] = float(K_common)
-st.session_state["common_maturity"] = float(T_common)
-st.session_state["common_sigma"] = float(sigma_common)
-st.session_state["common_rate"] = float(r_common)
-
-st.sidebar.markdown("---")
-st.sidebar.header("Basket & Asian – paramètres communs")
-common_ticker = st.sidebar.text_input("Ticker (scripts yfinance)", value="", key="common_ticker", placeholder="Ex: AAPL")
-ba_period = "2y"
-ba_interval = "1d"
-fetch_data = st.sidebar.button("Télécharger / actualiser les données (scripts)", key="common_download")
-
-if fetch_data:
-    spot_from_csv = None
-    sigma_from_csv = None
-    try:
-        subprocess.run(
-            [sys.executable, "build_option_prices_csv.py", common_ticker, "--output", "ticker_prices.csv"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except Exception as exc:
-        st.sidebar.warning(f"Impossible d'exécuter build_option_prices_csv.py : {exc}")
-    try:
-        opt_csv = pd.read_csv("ticker_prices.csv")
-        if not opt_csv.empty:
-            if "S0" in opt_csv.columns:
-                spot_from_csv = float(opt_csv["S0"].median())
-                st.session_state["S0_common"] = spot_from_csv
-                st.session_state["K_common"] = spot_from_csv
-                st.session_state["common_spot"] = spot_from_csv
-                st.session_state["common_strike"] = spot_from_csv
-                S0_common = spot_from_csv
-                K_common = spot_from_csv
-            if "iv" in opt_csv.columns:
-                maturity_target = st.session_state.get("common_maturity", 1.0)
-                calls = opt_csv[opt_csv.get("option_type") == "Call"] if "option_type" in opt_csv.columns else opt_csv
-                if "T" in calls.columns and not calls.empty:
-                    calls = calls.copy()
-                    calls["abs_diff_T"] = (calls["T"] - maturity_target).abs()
-                    best = calls.sort_values("abs_diff_T").iloc[0]
-                    sigma_from_csv = float(best["iv"]) if pd.notna(best["iv"]) else None
-                else:
-                    sigma_from_csv = float(opt_csv["iv"].median(skipna=True))
-                if sigma_from_csv is not None:
-                    st.session_state["sigma_common"] = sigma_from_csv
-                    st.session_state["common_sigma"] = sigma_from_csv
-                    sigma_common = sigma_from_csv
-    except Exception:
-        pass
-
 common_spot_value = float(S0_common)
 common_maturity_value = float(T_common)
 common_strike_value = float(K_common)
@@ -2098,10 +2074,10 @@ common_rate_value = float(r_common)
 common_sigma_value = float(sigma_common)
 
 st.session_state["common_spot"] = common_spot_value
-st.session_state["common_maturity"] = common_maturity_value
 st.session_state["common_strike"] = common_strike_value
-st.session_state["common_rate"] = common_rate_value
+st.session_state["common_maturity"] = common_maturity_value
 st.session_state["common_sigma"] = common_sigma_value
+st.session_state["common_rate"] = common_rate_value
 
 (
     tab_european,
@@ -2456,12 +2432,8 @@ with tab_basket:
 
 with tab_asian:
     ui_asian_options(
-        ticker=common_ticker,
-        period=ba_period,
-        interval=ba_interval,
         spot_default=common_spot_value,
         sigma_common=common_sigma_value,
-        hist_df=pd.DataFrame(),
         maturity_common=common_maturity_value,
         strike_common=common_strike_value,
         rate_common=common_rate_value,
