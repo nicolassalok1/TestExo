@@ -363,6 +363,80 @@ def _compute_mc_heatmaps(
     return call_matrix, put_matrix
 
 
+def _compute_lookback_exact_heatmap(
+    s_values: np.ndarray,
+    t_values: np.ndarray,
+    t_current: float,
+    rate: float,
+    sigma: float,
+) -> np.ndarray:
+    matrix = np.zeros((len(t_values), len(s_values)))
+    for i, maturity in enumerate(t_values):
+        for j, spot in enumerate(s_values):
+            lookback_opt = lookback_call_option(
+                T=float(maturity), t=float(t_current), S0=float(spot), r=float(rate), sigma=float(sigma)
+            )
+            matrix[i, j] = lookback_opt.price_exact()
+    return matrix
+
+
+def _compute_lookback_mc_heatmap(
+    s_values: np.ndarray,
+    t_values: np.ndarray,
+    t_current: float,
+    rate: float,
+    sigma: float,
+    n_iters: int,
+) -> np.ndarray:
+    matrix = np.zeros((len(t_values), len(s_values)))
+    for i, maturity in enumerate(t_values):
+        for j, spot in enumerate(s_values):
+            lookback_opt = lookback_call_option(
+                T=float(maturity), t=float(t_current), S0=float(spot), r=float(rate), sigma=float(sigma)
+            )
+            matrix[i, j] = lookback_opt.price_monte_carlo(n_iters)
+    return matrix
+
+
+def _compute_american_ls_heatmaps(
+    s_values: np.ndarray,
+    k_values: np.ndarray,
+    maturity: float,
+    process,
+    n_paths: int,
+    n_steps: int,
+    v0=None,
+) -> tuple[np.ndarray, np.ndarray]:
+    call_matrix = np.zeros((len(k_values), len(s_values)))
+    put_matrix = np.zeros_like(call_matrix)
+    for i, strike in enumerate(k_values):
+        for j, spot in enumerate(s_values):
+            option_call = Option(s0=spot, T=maturity, K=strike, v0=v0, call=True)
+            option_put = Option(s0=spot, T=maturity, K=strike, v0=v0, call=False)
+            call_matrix[i, j] = longstaff_schwartz_price(option_call, process, n_paths, n_steps)
+            put_matrix[i, j] = longstaff_schwartz_price(option_put, process, n_paths, n_steps)
+    return call_matrix, put_matrix
+
+
+def _compute_american_crr_heatmaps(
+    s_values: np.ndarray,
+    k_values: np.ndarray,
+    maturity: float,
+    rate: float,
+    sigma: float,
+    n_tree: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    call_matrix = np.zeros((len(k_values), len(s_values)))
+    put_matrix = np.zeros_like(call_matrix)
+    for i, strike in enumerate(k_values):
+        for j, spot in enumerate(s_values):
+            option_call = Option(s0=spot, T=maturity, K=strike, call=True)
+            option_put = Option(s0=spot, T=maturity, K=strike, call=False)
+            call_matrix[i, j] = crr_pricing(r=rate, sigma=sigma, option=option_call, n=n_tree)
+            put_matrix[i, j] = crr_pricing(r=rate, sigma=sigma, option=option_put, n=n_tree)
+    return call_matrix, put_matrix
+
+
 def _build_crr_tree(option: Option, r: float, sigma: float, n_steps: int) -> tuple[np.ndarray, np.ndarray]:
     if n_steps <= 0:
         raise ValueError("n_steps doit être supérieur à 0.")
@@ -490,6 +564,7 @@ heatmap_span = st.sidebar.number_input(
 )
 heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
 heatmap_strike_values = _heatmap_axis(S0_common, heatmap_span)
+heatmap_maturity_values = _heatmap_axis(T_common, T_common * 0.5)
 
 tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
     ["Européenne", "Américaine", "Lookback", "Barrière", "Bermuda"]
@@ -541,6 +616,9 @@ with tab_american:
     st.header("Option américaine")
     cpflag_am = st.selectbox("Call / Put (américaine)", ["Call", "Put"], key="cpflag_am")
     cpflag_am_char = "c" if cpflag_am == "Call" else "p"
+    st.caption(
+        "Les heatmaps affichent les prix call / put sur un carré Spot × Strike centré autour du spot défini dans la barre latérale."
+    )
 
     tab_am_ls, tab_am_crr = st.tabs(
         ["Longstaff–Schwartz", "Arbre CRR"]
@@ -567,23 +645,24 @@ with tab_american:
                 mu=r_common - d_common, kappa=kappa_am, theta=theta_am, eta=eta_am, rho=rho_am
             )
 
-        if st.button("Calculer (LS)", key="btn_am_ls"):
-            option_am_ls = Option(s0=S0_common, T=T_common, K=K_common, v0=v0_am, call=cpflag_am == "Call")
-            price_ls = longstaff_schwartz_price(
-                option=option_am_ls,
-                process=process_am,
-                n_paths=int(n_paths_am),
-                n_steps=int(n_steps_am),
+        with st.spinner("Calcul des heatmaps Longstaff–Schwartz"):
+            call_heatmap_ls, put_heatmap_ls = _compute_american_ls_heatmaps(
+                heatmap_spot_values,
+                heatmap_strike_values,
+                T_common,
+                process_am,
+                int(n_paths_am),
+                int(n_steps_am),
+                v0_am,
             )
-            st.write(f"**Prix Longstaff–Schwartz**: {price_ls:.4f}")
+        _render_call_put_heatmaps(
+            "Longstaff–Schwartz", call_heatmap_ls, put_heatmap_ls, heatmap_spot_values, heatmap_strike_values
+        )
 
     with tab_am_crr:
         st.subheader("Arbre binomial CRR")
         n_tree_am = st.number_input("Nombre de pas de l'arbre", value=10, min_value=5, key="n_tree_am")
         option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
-        if st.button("Calculer (CRR)", key="btn_am_crr"):
-            price_crr = crr_pricing(r=r_common, sigma=sigma_common, option=option_am_crr, n=int(n_tree_am))
-            st.write(f"**Prix CRR**: {price_crr:.4f}")
         int_n_tree = int(n_tree_am)
         if int_n_tree > 10:
             st.info("L'affichage peut devenir difficile à lire pour un nombre de pas supérieur à 10.")
@@ -595,44 +674,58 @@ with tab_american:
         fig_tree = _plot_crr_tree(spot_tree, value_tree)
         st.pyplot(fig_tree)
         plt.close(fig_tree)
+        
+        with st.spinner("Calcul des heatmaps CRR"):
+            call_heatmap_crr, put_heatmap_crr = _compute_american_crr_heatmaps(
+                heatmap_spot_values,
+                heatmap_strike_values,
+                T_common,
+                r_common,
+                sigma_common,
+                int_n_tree,
+            )
+        _render_call_put_heatmaps(
+            "CRR", call_heatmap_crr, put_heatmap_crr, heatmap_spot_values, heatmap_strike_values
+        )
 
 
 with tab_lookback:
     st.header("Options lookback (floating strike)")
+    st.caption(
+        "Les heatmaps affichent les prix lookback sur un carré Spot × Maturité centré autour des valeurs définies dans la barre latérale."
+    )
 
-    tab_lb_exact, tab_lb_mc, tab_lb_pde = st.tabs(["Exacte", "Monte Carlo", "PDE Crank–Nicolson"])
+    tab_lb_exact, tab_lb_mc = st.tabs(["Exacte", "Monte Carlo"])
 
     with tab_lb_exact:
         st.subheader("Formule exacte")
         t0_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t0_lb_exact")
-        if st.button("Calculer (Exact)", key="btn_lb_exact"):
-            lookback_exact = lookback_call_option(
-                T=T_common, t=t0_lb, S0=S0_common, r=r_common, sigma=sigma_common
+        with st.spinner("Calcul de la heatmap exacte"):
+            heatmap_lb_exact = _compute_lookback_exact_heatmap(
+                heatmap_spot_values,
+                heatmap_maturity_values,
+                t0_lb,
+                r_common,
+                sigma_common,
             )
-            price_lb_exact = lookback_exact.price_exact()
-            st.write(f"**Prix exact lookback**: {price_lb_exact:.6f}")
+        st.write("Heatmap Lookback (formule exacte)")
+        _render_heatmap(heatmap_lb_exact, heatmap_spot_values, heatmap_maturity_values, "Prix Lookback (Exact)")
 
     with tab_lb_mc:
         st.subheader("Monte Carlo lookback")
         t0_lb_mc = st.number_input("t (temps courant) MC", value=0.0, min_value=0.0, key="t0_lb_mc")
         n_iters_lb = st.number_input("Itérations Monte Carlo", value=10_000, min_value=100, key="n_iters_lb_mc")
-        if st.button("Calculer (MC Lookback)", key="btn_lb_mc"):
-            lookback_mc = lookback_call_option(T=T_common, t=t0_lb_mc, S0=S0_common, r=r_common, sigma=sigma_common)
-            price_lb_mc = lookback_mc.price_monte_carlo(int(n_iters_lb))
-            st.write(f"**Prix Monte Carlo lookback**: {price_lb_mc:.6f}")
-
-    with tab_lb_pde:
-        st.subheader("PDE Crank–Nicolson lookback")
-        t0_lb_pde = st.number_input("t (temps courant) PDE", value=0.0, min_value=0.0, key="t0_lb_pde")
-        n_t_lb = st.number_input("Pas de temps PDE n_t", value=200, min_value=10, key="n_t_lb")
-        n_s_lb = st.number_input("Pas d'espace PDE n_s", value=200, min_value=10, key="n_s_lb")
-        if st.button("Calculer (PDE Lookback)", key="btn_lb_pde"):
-            lookback_pde = lookback_call_option(
-                T=T_common, t=t0_lb_pde, S0=S0_common, r=r_common, sigma=sigma_common
+        with st.spinner("Calcul de la heatmap Monte Carlo"):
+            heatmap_lb_mc = _compute_lookback_mc_heatmap(
+                heatmap_spot_values,
+                heatmap_maturity_values,
+                t0_lb_mc,
+                r_common,
+                sigma_common,
+                int(n_iters_lb),
             )
-            lookback_pde.price_pde(int(n_t_lb), int(n_s_lb))
-            price_lb_pde = lookback_pde.get_pde_result(z=1.0)
-            st.write(f"**Prix PDE lookback**: {price_lb_pde:.6f}")
+        st.write("Heatmap Lookback (Monte Carlo)")
+        _render_heatmap(heatmap_lb_mc, heatmap_spot_values, heatmap_maturity_values, "Prix Lookback (MC)")
 
 
 with tab_barrier:
