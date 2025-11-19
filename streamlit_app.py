@@ -1,6 +1,7 @@
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
+from scipy.linalg import lu_factor, lu_solve
 from scipy.stats import norm
 
 from Longstaff.option import Option
@@ -14,10 +15,81 @@ from Lookback.european_call import european_call_option
 from Lookback.lookback_call import lookback_call_option
 
 
+def simulate_gbm_paths(S0, r, q, sigma, T, M, N_paths, seed=42):
+    """
+    Simulate GBM paths under the risk-neutral measure:
+        dS_t = (r - q) S_t dt + sigma S_t dW_t
+    Returns:
+        S : array of shape (M+1, N_paths)
+        dt: time step
+    """
+    dt = T / M
+    rng = np.random.default_rng(seed)
+    S = np.empty((M + 1, N_paths))
+    S[0, :] = S0
+    Z = rng.normal(size=(M, N_paths))
+    drift = (r - q - 0.5 * sigma**2) * dt
+    vol_term = sigma * np.sqrt(dt)
+    for t in range(1, M + 1):
+        S[t, :] = S[t - 1, :] * np.exp(drift + vol_term * Z[t - 1, :])
+    return S, dt
+
+
+def price_bermudan_lsmc(
+    S0,
+    K,
+    T,
+    r,
+    q,
+    sigma,
+    cpflag="p",
+    M=50,
+    N_paths=100_000,
+    degree=3,
+    n_ex_dates=6,
+    seed: int = 42,
+):
+    """
+    Longstaff–Schwartz Monte Carlo pricing for a Bermudan option
+    under risk-neutral GBM (Black–Scholes dynamics).
+    """
+    S, dt = simulate_gbm_paths(S0, r, q, sigma, T, M, N_paths, seed=seed)
+    disc = np.exp(-r * dt)
+
+    if cpflag == "c":
+        Y = np.maximum(S - K, 0.0)
+    elif cpflag == "p":
+        Y = np.maximum(K - S, 0.0)
+    else:
+        raise ValueError("cpflag must be 'c' or 'p'")
+
+    C = Y[-1, :].copy()
+    ex_indices = np.linspace(1, M - 1, max(1, n_ex_dates - 1), dtype=int)
+    ex_set = set(ex_indices.tolist())
+
+    for j in range(M - 1, 0, -1):
+        C *= disc
+        if j in ex_set:
+            S_j = S[j, :]
+            Y_j = Y[j, :]
+            itm = Y_j > 0.0
+            if np.any(itm):
+                X = np.vstack([S_j[itm] ** k for k in range(degree + 1)]).T
+                y_reg = C[itm]
+                beta, *_ = np.linalg.lstsq(X, y_reg, rcond=None)
+                X_all = np.vstack([S_j**k for k in range(degree + 1)]).T
+                C_hat = X_all @ beta
+                exercise = (Y_j > C_hat) & itm
+                C[exercise] = Y_j[exercise]
+
+    C *= disc
+    price = np.mean(C)
+    return float(price)
+
+
 # ---------------------------------------------------------------------------
 #  Bermudan / European / American + Barrier (Crank–Nicolson)
 # ---------------------------------------------------------------------------
-
 
 class CrankNicolsonBS:
     """
@@ -32,59 +104,169 @@ class CrankNicolsonBS:
         'p' : put
     """
 
-    def __init__(self, Typeflag, cpflag, S0, K, T, vol, r, d):
+    def __init__(
+        self,
+        Typeflag: str,
+        cpflag: str,
+        S0: float,
+        K: float,
+        T: float,
+        vol: float,
+        r: float,
+        d: float,
+        n_spatial: int = 500,
+        n_time: int = 600,
+        exercise_step: int | None = None,
+        n_exercise_dates: int | None = None,
+        **_,
+    ) -> None:
         self.Typeflag = Typeflag
         self.cpflag = cpflag
-        self.S0 = S0
-        self.K = K
-        self.T = T
-        self.vol = vol
-        self.r = r
-        self.d = d
+        self.S0 = float(S0)
+        self.K = float(K)
+        self.T = float(T)
+        self.vol = float(vol)
+        self.r = float(r)
+        self.d = float(d)
+
+        self.n_spatial = max(50, int(n_spatial))
+        self.n_time = max(50, int(n_time))
+
+        # Deux modes possibles pour la Bermudane :
+        # - exercise_step       : exercice tous les 'exercise_step' pas
+        # - n_exercise_dates    : nb de dates d'exercice (incluant T)
+        # Si les deux sont donnés -> erreur, c'est ambigu.
+        if exercise_step is not None and n_exercise_dates is not None:
+            raise ValueError(
+                "Spécifie soit exercise_step, soit n_exercise_dates, pas les deux."
+            )
+
+        self.exercise_step = int(exercise_step) if exercise_step is not None else None
+        self.n_exercise_dates = (
+            int(n_exercise_dates) if n_exercise_dates is not None else None
+        )
+
+    # -------------------- utils --------------------
+
+    def _resolve_params(
+        self,
+        Typeflag: str | None,
+        cpflag: str | None,
+        S0: float | None,
+        K: float | None,
+        T: float | None,
+        vol: float | None,
+        r: float | None,
+        d: float | None,
+    ):
+        """Résout les paramètres effectifs sans casser les valeurs 0 éventuelles."""
+
+        Typeflag = self.Typeflag if Typeflag is None else Typeflag
+        cpflag = self.cpflag if cpflag is None else cpflag
+        S0 = self.S0 if S0 is None else float(S0)
+        K = self.K if K is None else float(K)
+        T = self.T if T is None else float(T)
+        vol = self.vol if vol is None else float(vol)
+        r = self.r if r is None else float(r)
+        d = self.d if d is None else float(d)
+        return Typeflag, cpflag, S0, K, T, vol, r, d
+
+    # -------------------- solveur CN --------------------
 
     def CN_option_info(
         self,
-        Typeflag=None,
-        cpflag=None,
-        S0=None,
-        K=None,
-        T=None,
-        vol=None,
-        r=None,
-        d=None,
-    ):
+        Typeflag: str | None = None,
+        cpflag: str | None = None,
+        S0: float | None = None,
+        K: float | None = None,
+        T: float | None = None,
+        vol: float | None = None,
+        r: float | None = None,
+        d: float | None = None,
+    ) -> tuple[float, float, float, float]:
         """
         Résout la PDE et retourne (Price, Delta, Gamma, Theta).
         """
 
-        Typeflag = Typeflag or self.Typeflag
-        cpflag = cpflag or self.cpflag
-        S0 = S0 or self.S0
-        K = K or self.K
-        T = T or self.T
-        vol = vol or self.vol
-        r = r or self.r
-        d = d or self.d
+        Typeflag, cpflag, S0, K, T, vol, r, d = self._resolve_params(
+            Typeflag, cpflag, S0, K, T, vol, r, d
+        )
 
+        Typeflag = Typeflag.strip()
+        cpflag = cpflag.strip()
+        if Typeflag not in {"Eu", "Am", "Bmd"}:
+            raise ValueError("Typeflag doit être 'Eu', 'Am' ou 'Bmd'.")
+        if cpflag not in {"c", "p"}:
+            raise ValueError("cpflag doit être 'c' ou 'p'.")
+
+        # Cas trivial T=0
+        if T <= 0.0 or self.n_time <= 0:
+            payoff0 = max(S0 - K, 0.0) if cpflag == "c" else max(K - S0, 0.0)
+            return float(payoff0), 0.0, 0.0, 0.0
+
+        if Typeflag == "Bmd":
+            M_lsmc = max(1, min(self.n_time, 50))
+            N_paths = 50_000
+            n_ex_dates = self.n_exercise_dates or 6
+            seed_base = 12345
+
+            def _lsmc_price(s0_val: float, t_val: float) -> float:
+                return price_bermudan_lsmc(
+                    S0=s0_val,
+                    K=K,
+                    T=max(t_val, 1e-6),
+                    r=r,
+                    q=d,
+                    sigma=vol,
+                    cpflag=cpflag,
+                    M=M_lsmc,
+                    N_paths=N_paths,
+                    degree=3,
+                    n_ex_dates=n_ex_dates,
+                    seed=seed_base,
+                )
+
+            price_bmd = _lsmc_price(S0, T)
+
+            bump_s = max(1e-4, 0.01 * S0)
+            price_up = _lsmc_price(S0 + bump_s, T)
+            price_down = _lsmc_price(max(S0 - bump_s, 1e-6), T)
+            delta = (price_up - price_down) / (2.0 * bump_s)
+            gamma = (price_up - 2.0 * price_bmd + price_down) / (bump_s**2)
+
+            theta = 0.0
+            theta_h = min(max(1.0 / 365.0, 0.01 * T), max(T / 2.0, 1e-6))
+            if T > theta_h:
+                price_short = _lsmc_price(S0, T - theta_h)
+                theta = (price_short - price_bmd) / theta_h
+
+            return float(price_bmd), float(delta), float(gamma), float(theta)
+
+        # ----- Grille en log(S) -----
         mu = r - d - 0.5 * vol * vol
-        x_max = vol * np.sqrt(T) * 5
-        n_points = 500
-        dx = 2 * x_max / n_points
+        x_max = vol * np.sqrt(max(T, 1e-8)) * 5.0
+        n_points = self.n_spatial
+        dx = 2.0 * x_max / n_points
+
         X = np.linspace(-x_max, x_max, n_points + 1)
+        max_log = np.log(np.finfo(float).max / max(S0, 1e-12))
+        X_clipped = np.clip(X, -max_log, max_log)
+        s_grid = S0 * np.exp(X_clipped)
+
         n_index = np.arange(0, n_points + 1)
 
-        n_time = 600
+        n_time = self.n_time
         dt = T / n_time
 
         a = 0.25 * dt * ((vol**2) * (n_index**2) - mu * n_index)
         b = -0.5 * dt * ((vol**2) * (n_index**2) + r)
         c = 0.25 * dt * ((vol**2) * (n_index**2) + mu * n_index)
 
-        main_diag_A = 1 - b - 2 * a
+        main_diag_A = 1.0 - b - 2.0 * a
         upper_A = a + c
         lower_A = a - c
 
-        main_diag_B = 1 + b + 2 * a
+        main_diag_B = 1.0 + b + 2.0 * a
         upper_B = -a - c
         lower_B = -a + c
 
@@ -94,66 +276,69 @@ class CrankNicolsonBS:
         np.fill_diagonal(A, main_diag_A)
         np.fill_diagonal(A[1:], lower_A[:-1])
         np.fill_diagonal(A[:, 1:], upper_A[:-1])
+        A = np.nan_to_num(A, nan=0.0, posinf=1e6, neginf=-1e6)
 
         np.fill_diagonal(B, main_diag_B)
         np.fill_diagonal(B[1:], lower_B[:-1])
         np.fill_diagonal(B[:, 1:], upper_B[:-1])
+        B = np.nan_to_num(B, nan=0.0, posinf=1e6, neginf=-1e6)
 
-        Ainv = np.linalg.inv(A)
+        lu_factor_A = lu_factor(A)
 
+        # Payoff terminal
         if cpflag == "c":
-            values = np.clip(S0 * np.exp(X) - K, 0, 1e10)
-        elif cpflag == "p":
-            values = np.clip(K - S0 * np.exp(X), 0, 1e10)
+            values = np.maximum(s_grid - K, 0.0)
         else:
-            raise ValueError("cpflag doit être 'c' ou 'p'.")
+            values = np.maximum(K - s_grid, 0.0)
 
         payoff = values.copy()
         values_prev_time = values.copy()
 
-        if Typeflag == "Am":
-            for time_index in range(n_time):
-                if time_index == n_time - 1:
-                    values_prev_time = values.copy()
-                values = B.dot(values)
-                values = Ainv.dot(values)
-                values = np.where(values > payoff, values, payoff)
+        S_max = s_grid[-1]
+        S_min = s_grid[0]  # pas utilisé mais dispo si besoin
 
-        elif Typeflag == "Bmd":
-            exercise_step = 10
-            for time_index in range(n_time):
-                if time_index == n_time - 1:
-                    values_prev_time = values.copy()
-                values = B.dot(values)
-                values = Ainv.dot(values)
-                if time_index % exercise_step == 0:
-                    values = np.where(values > payoff, values, payoff)
+        # ----- Boucle backward -----
+        for time_index in range(n_time):
+            # Sauvegarde pour theta (un seul pas suffit)
+            if time_index == n_time - 1:
+                values_prev_time = values.copy()
 
-        elif Typeflag == "Eu":
-            for time_index in range(n_time):
-                if time_index == n_time - 1:
-                    values_prev_time = values.copy()
-                values = B.dot(values)
-                values = Ainv.dot(values)
-                if cpflag == "c":
-                    values[0] = 0.0
-                    values[-1] = S0 * np.exp(x_max) - K * np.exp(-r * dt * time_index)
-                else:
-                    values[0] = K * np.exp(-r * dt * (n_time - time_index))
-                    values[-1] = 0.0
-        else:
-            raise ValueError("Typeflag doit être 'Eu', 'Am' ou 'Bmd'.")
+            rhs = B.dot(values)
+            values = lu_solve(lu_factor_A, rhs)
 
+            t_now = T - (time_index + 1) * dt
+            tau = T - t_now  # temps restant à maturité
+
+            # Conditions aux bords
+            if cpflag == "c":
+                values[0] = 0.0
+                values[-1] = S_max - K * np.exp(-r * tau)
+            else:
+                values[0] = K * np.exp(-r * tau)
+                values[-1] = 0.0
+
+            # Gestion du style
+            if Typeflag == "Am":
+                values = np.maximum(values, payoff)
+            elif Typeflag == "Eu":
+                pass
+
+        # ----- Grecs par différences finies -----
         middle_index = n_points // 2
         price = values[middle_index]
 
         s_plus = S0 * np.exp(dx)
         s_minus = S0 * np.exp(-dx)
-        delta = (values[middle_index + 1] - values[middle_index - 1]) / (s_plus - s_minus)
 
-        d_value_d_s_plus = (values[middle_index + 1] - values[middle_index]) / (s_plus - S0)
-        d_value_d_s_minus = (values[middle_index] - values[middle_index - 1]) / (S0 - s_minus)
-        gamma = (d_value_d_s_plus - d_value_d_s_minus) / ((s_plus - s_minus) / 2.0)
+        v_plus = values[middle_index + 1]
+        v_0 = values[middle_index]
+        v_minus = values[middle_index - 1]
+
+        delta = (v_plus - v_minus) / (s_plus - s_minus)
+
+        dVdS_plus = (v_plus - v_0) / (s_plus - S0)
+        dVdS_minus = (v_0 - v_minus) / (S0 - s_minus)
+        gamma = (dVdS_plus - dVdS_minus) / ((s_plus - s_minus) / 2.0)
 
         theta = -(values[middle_index] - values_prev_time[middle_index]) / dt
 
@@ -934,7 +1119,7 @@ with tab_american:
         process_type_am = st.selectbox(
             "Processus sous-jacent", ["Geometric Brownian Motion", "Heston"], key="process_type_am"
         )
-        n_paths_am = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_am")
+        n_paths_am = st.number_input("Trajectoires Monte Carlo", value=1000, min_value=100, key="n_paths_am")
         n_steps_am = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_am")
 
         if process_type_am == "Geometric Brownian Motion":
@@ -1022,7 +1207,7 @@ with tab_lookback:
     with tab_lb_mc:
         st.subheader("Monte Carlo lookback")
         t0_lb_mc = st.number_input("t (temps courant) MC", value=0.0, min_value=0.0, key="t0_lb_mc")
-        n_iters_lb = st.number_input("Itérations Monte Carlo", value=10_000, min_value=100, key="n_iters_lb_mc")
+        n_iters_lb = st.number_input("Itérations Monte Carlo", value=1000, min_value=100, key="n_iters_lb_mc")
         with st.spinner("Calcul de la heatmap Monte Carlo"):
             heatmap_lb_mc = _compute_lookback_mc_heatmap(
                 heatmap_spot_values,
