@@ -918,14 +918,6 @@ with tab_barrier:
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
         Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
-        strike_span_up = st.number_input(
-            "Span strike (axe K)",
-            value=20.0,
-            min_value=0.0,
-            step=1.0,
-            help="Le strike varie de Hu - span à Hu dans la heatmap.",
-            key="strike_span_up",
-        )
         method_barrier_up = st.selectbox(
             "Méthode de pricing (Up-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_up"
         )
@@ -971,49 +963,12 @@ with tab_barrier:
                     )
                 st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
 
-        strike_axis_up = np.linspace(
-            max(0.01, float(Hu_up) - float(strike_span_up)),
-            float(Hu_up),
-            HEATMAP_GRID_SIZE,
-            endpoint=True,
-        )
-        with st.spinner("Construction de la heatmap up-and-out"):
-            heatmap_matrix_up = _compute_up_and_out_strike_heatmap(
-                option_type=cpflag_barrier_up_char,
-                barrier=Hu_up,
-                strike_values=strike_axis_up,
-                maturity_values=heatmap_maturity_values,
-                spot=S0_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Up-and-out (T × K)")
-        st.caption(f"Rappel : S0 = {S0_common:.4f}, Hu = {Hu_up:.4f}")
-        _render_heatmap(
-            heatmap_matrix_up,
-            strike_axis_up,
-            heatmap_maturity_values,
-            f"Prix {cpflag_barrier_up} Up-and-out",
-            xlabel="Strike K",
-            ylabel="T (années)",
-        )
-
     with tab_barrier_down:
         st.subheader("Down-and-out")
         cpflag_barrier_down = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down")
         cpflag_barrier_down_char = "c" if cpflag_barrier_down == "Call" else "p"
         Hd_down = st.number_input(
             "Barrière basse Hd", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down"
-        )
-        barrier_down_offset_max = st.number_input(
-            "Offset max barrière basse (% du strike)",
-            value=0.5,
-            min_value=0.05,
-            max_value=0.95,
-            step=0.05,
-            help="Contrôle la plage relative des barrières basses utilisées dans les heatmaps down-and-out.",
-            key="barrier_down_offset_max",
         )
         method_barrier_down = st.selectbox(
             "Méthode de pricing (Down-and-out)", ["Exacte (fermée)", "Monte Carlo"], key="method_barrier_down"
@@ -1059,31 +1014,6 @@ with tab_barrier:
                         n_steps=int(n_steps_down),
                     )
                 st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
-        
-        heatmap_barrier_down_offsets = np.linspace(
-            0.01, max(0.01, float(barrier_down_offset_max)), HEATMAP_GRID_SIZE, endpoint=True
-        )
-        with st.spinner("Construction de la heatmap down-and-out"):
-            heatmap_matrix_down, ratio_axis_down = _compute_barrier_heatmap_matrix(
-                option_type=cpflag_barrier_down_char,
-                barrier_type="down",
-                strike_values=heatmap_strike_values,
-                offset_values=heatmap_barrier_down_offsets,
-                S0=S0_common,
-                T=T_common,
-                r=r_common,
-                dividend=d_common,
-                sigma=sigma_common,
-            )
-        st.write("Heatmap Down-and-out (barrière = strike × ratio)")
-        _render_heatmap(
-            heatmap_matrix_down,
-            ratio_axis_down,
-            heatmap_strike_values,
-            f"Prix {cpflag_barrier_down} Down-and-out",
-            xlabel="Ratio barrière / strike",
-            ylabel="Strike",
-        )
 
 
 with tab_bermudan:
@@ -1108,7 +1038,6 @@ with tab_bermudan:
             vol=sigma_common,
             r=r_common,
             d=d_common,
-            n_exercise_dates=int(n_ex_dates_bmd),
         )
         price_bmd, delta_bmd, gamma_bmd, theta_bmd = model_bmd.CN_option_info()
         st.write(f"**Prix**: {price_bmd:.4f}")
