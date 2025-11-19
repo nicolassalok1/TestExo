@@ -4,6 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -2092,65 +2095,43 @@ def heston_mc_pricer(
     return math.exp(-r * T) * float(np.mean(payoff))
 
 
-def fetch_spot(symbol: str) -> float:
-    ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="1d")
-    if hist.empty:
-        raise RuntimeError("Impossible de récupérer le spot.")
-    return float(hist["Close"].iloc[-1])
-
-
-def _select_monthly_expirations(expirations, years_ahead: float = 2.5) -> list[str]:
-    today = pd.Timestamp.utcnow().date()
-    limit_date = today + pd.Timedelta(days=365 * years_ahead)
-    monthly: dict[tuple[int, int], tuple[pd.Timestamp, str]] = {}
-    for exp in expirations:
-        exp_ts = pd.Timestamp(exp)
-        exp_date = exp_ts.date()
-        if not (today < exp_date <= limit_date):
-            continue
-        key = (exp_date.year, exp_date.month)
-        if key not in monthly or exp_ts < monthly[key][0]:
-            monthly[key] = (exp_ts, exp)
-    return [item[1] for item in sorted(monthly.values(), key=lambda x: x[0])]
-
-
 @st.cache_data(show_spinner=True)
-def download_options(symbol: str, option_type: str, years_ahead: float = 2.5) -> pd.DataFrame:
-    ticker = yf.Ticker(symbol)
-    spot = fetch_spot(symbol)
-    expirations = ticker.options
-    if not expirations:
-        raise RuntimeError(f"Aucune maturité disponible pour {symbol}.")
-    selected = _select_monthly_expirations(expirations, years_ahead)
-    rows: list[dict] = []
-    now = pd.Timestamp.utcnow().tz_localize(None)
-    price_col = "C_mkt" if option_type == "call" else "P_mkt"
-    for expiry in selected:
-        expiry_dt = pd.Timestamp(expiry)
-        T = max((expiry_dt - now).total_seconds() / (365.0 * 24 * 3600.0), 0.0)
-        chain = ticker.option_chain(expiry)
-        data = chain.calls if option_type == "call" else chain.puts
-        for _, row in data.iterrows():
-            rows.append(
-                {
-                    "S0": spot,
-                    "K": float(row["strike"]),
-                    "T": T,
-                    price_col: float(row["lastPrice"]),
-                    "iv_market": float(row.get("impliedVolatility", float("nan"))),
-                }
-            )
-    df = pd.DataFrame(rows)
-    try:
-        out_dir = Path("data")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
-        out_path = out_dir / f"{symbol}_{option_type}_options_{ts}.csv"
-        df.to_csv(out_path, index=False)
-    except Exception:
-        pass
-    return df
+def download_options(
+    symbol: str,
+    option_type: str,
+    years_ahead: float = 2.5,
+    spot_override: float | None = None,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    out_dir = Path("data")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"heston_{option_type}.csv"
+    cmd = [
+        sys.executable,
+        "fetch_heston_options.py",
+        "--ticker",
+        symbol,
+        "--type",
+        option_type,
+        "--years",
+        str(years_ahead),
+        "--output",
+        str(out_path),
+    ]
+    if spot_override is not None:
+        cmd += ["--fallback-spot", str(spot_override)]
+    need_fetch = force_refresh or not out_path.exists()
+    if need_fetch:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            if out_path.exists():
+                print(
+                    f"Avertissement: échec du téléchargement yfinance ({symbol}/{option_type}): {result.stderr.strip()} – utilisation du cache.",
+                    file=sys.stderr,
+                )
+            else:
+                raise RuntimeError(f"fetch_heston_options.py a échoué: {result.stderr.strip()}")
+    return pd.read_csv(out_path)
 
 
 def prices_from_unconstrained(u: torch.Tensor, S0_t: torch.Tensor, K_t: torch.Tensor, T_t: torch.Tensor, r: float, q: float):
@@ -2286,14 +2267,38 @@ def ui_heston_pipeline():
         "Télécharge les données, calibre un modèle Heston avec un NN PyTorch puis trace surfaces IV Carr-Madan et heatmaps Monte Carlo."
     )
 
+    common_spot = float(st.session_state.get("common_spot", 100.0))
+    common_rate = float(st.session_state.get("common_rate", 0.02))
+    common_dividend = float(st.session_state.get("common_dividend", 0.0))
+    common_maturity = float(st.session_state.get("common_maturity", 1.0))
+    common_span = float(st.session_state.get("heatmap_span_value", 25.0))
+
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         ticker = st.text_input("Ticker yfinance", value="SPY", key="heston_ticker").strip().upper()
-        rf_rate = st.number_input("Taux sans risque r", value=0.02, step=0.005, format="%.3f", key="heston_r")
-        div_yield = st.number_input("Dividende q", value=0.00, step=0.005, format="%.3f", key="heston_q")
+        rf_rate = common_rate
+        div_yield = common_dividend
+        st.info(f"Taux sans risque commun r = {rf_rate:.4f}")
+        st.info(f"Dividende commun q = {div_yield:.4f}")
+        spot_override = common_spot
+        st.info(f"Spot commun utilisé pour Heston : {spot_override:.4f}")
+        force_refresh = st.checkbox(
+            "Forcer un nouveau téléchargement yfinance",
+            value=False,
+            key="heston_force_refresh",
+            help="Coche pour regénérer les CSV d'options avant le run.",
+        )
     with col_b:
-        T_mc = st.number_input("Maturité T pour MC (années)", value=1.0, min_value=0.1, max_value=5.0, step=0.1, key="heston_T")
-        span_mc = st.number_input("Span autour du spot (S/K)", value=20.0, min_value=5.0, max_value=100.0, step=5.0, key="heston_span")
+        T_mc = common_maturity
+        st.info(f"Maturité commune T = {T_mc:.4f} ans")
+        span_mc = st.number_input(
+            "Span autour du spot (S/K)",
+            value=min(max(common_span, 5.0), 100.0),
+            min_value=5.0,
+            max_value=100.0,
+            step=5.0,
+            key="heston_span",
+        )
         step_strike = st.number_input("Pas K (Carr-Madan)", value=1.0, min_value=0.5, max_value=5.0, step=0.5, key="heston_step")
     with col_c:
         max_iters = st.number_input("Itérations calibration NN", value=50, min_value=10, max_value=1000, step=10, key="heston_iters")
@@ -2308,10 +2313,27 @@ def ui_heston_pipeline():
     try:
         st.info(f"Téléchargement des options pour {ticker}…")
         years_ahead = 2.5
-        calls_df = download_options(ticker, "call", years_ahead)
-        puts_df = download_options(ticker, "put", years_ahead)
-        S0_ref = fetch_spot(ticker)
-        st.success(f"{len(calls_df)} calls et {len(puts_df)} puts téléchargés (S0 = {S0_ref:.2f}).")
+        calls_df = download_options(
+            ticker,
+            "call",
+            years_ahead,
+            spot_override=spot_override,
+            force_refresh=bool(force_refresh),
+        )
+        puts_df = download_options(
+            ticker,
+            "put",
+            years_ahead,
+            spot_override=spot_override,
+            force_refresh=bool(force_refresh),
+        )
+        if force_refresh:
+            st.session_state["heston_force_refresh"] = False
+        if "S0" in calls_df and not calls_df["S0"].isna().all():
+            S0_ref = float(calls_df["S0"].median())
+        else:
+            S0_ref = float(spot_override)
+        st.success(f"{len(calls_df)} calls et {len(puts_df)} puts téléchargés (S0 ≈ {S0_ref:.2f}).")
 
         st.info("Calibration Heston NN en cours…")
         progress_bar = st.progress(0)
@@ -2631,6 +2653,8 @@ st.session_state["common_strike"] = common_strike_value
 st.session_state["common_maturity"] = common_maturity_value
 st.session_state["common_sigma"] = common_sigma_value
 st.session_state["common_rate"] = common_rate_value
+st.session_state["common_dividend"] = float(d_common)
+st.session_state["heatmap_span_value"] = float(heatmap_span)
 
 (
     tab_european,
