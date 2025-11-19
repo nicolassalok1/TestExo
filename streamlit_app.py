@@ -1,6 +1,7 @@
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 from Longstaff.option import Option
 from Longstaff.pricing import (
@@ -9,7 +10,6 @@ from Longstaff.pricing import (
     monte_carlo_simulation,
 )
 from Longstaff.process import GeometricBrownianMotion, HestonProcess
-from Lookback.barrier_call import barrier_call_option
 from Lookback.european_call import european_call_option
 from Lookback.lookback_call import lookback_call_option
 
@@ -208,12 +208,15 @@ def CN_Barrier_option(Typeflag, cpflag, S0, K, Hu, Hd, T, vol, r, d):
     else:
         raise ValueError("cpflag doit être 'c' ou 'p'.")
 
-    if Typeflag == "UNO":
+    typeflag = Typeflag.upper()
+    if typeflag in {"UNO", "UO"}:
         values = np.where(s_grid < Hu, values, 0.0)
-    elif Typeflag == "DNO":
+    elif typeflag == "DNO":
         values = np.where((s_grid > Hd) & (s_grid < Hu), values, 0.0)
+    elif typeflag in {"DO"}:
+        values = np.where(s_grid > Hd, values, 0.0)
     else:
-        raise ValueError("Typeflag doit être 'UNO' ou 'DNO'.")
+        raise ValueError("Typeflag doit être 'UNO', 'UO', 'DO' ou 'DNO'.")
 
     values_prev_time = values.copy()
 
@@ -225,10 +228,12 @@ def CN_Barrier_option(Typeflag, cpflag, S0, K, Hu, Hd, T, vol, r, d):
         values = Ainv.dot(values)
 
         s_grid = S0 * np.exp(X)
-        if Typeflag == "UNO":
+        if typeflag in {"UNO", "UO"}:
             values = np.where(s_grid < Hu, values, 0.0)
-        elif Typeflag == "DNO":
+        elif typeflag == "DNO":
             values = np.where((s_grid > Hd) & (s_grid < Hu), values, 0.0)
+        elif typeflag == "DO":
+            values = np.where(s_grid > Hd, values, 0.0)
 
     middle_index = n_points // 2
     price = values[middle_index]
@@ -361,6 +366,88 @@ def _compute_mc_heatmaps(
             put_matrix[i, j] = np.mean(np.maximum(strike - terminal_prices, 0)) * discount
 
     return call_matrix, put_matrix
+
+
+def _barrier_closed_form_price(
+    option_type: str,
+    barrier_type: str,
+    S0: float,
+    K: float,
+    barrier: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+) -> float:
+    if barrier <= 0 or T <= 0 or sigma <= 0:
+        raise ValueError("Paramètres invalides pour la formule fermée barrière.")
+    if barrier_type == "up" and S0 >= barrier:
+        return 0.0
+    if barrier_type == "down" and S0 <= barrier:
+        return 0.0
+
+    option_flag = option_type.lower()
+    phi = 1.0 if option_flag in {"call", "c"} else -1.0
+    eta = 1.0 if barrier_type == "down" else -1.0
+    mu = (r - dividend - 0.5 * sigma * sigma) / (sigma * sigma)
+    sigma_sqrt_T = sigma * np.sqrt(T)
+    if sigma_sqrt_T == 0:
+        return 0.0
+    x1 = (np.log(S0 / K) / sigma_sqrt_T) + (1.0 + mu) * sigma_sqrt_T
+    y1 = (np.log((barrier * barrier) / (S0 * K)) / sigma_sqrt_T) + (1.0 + mu) * sigma_sqrt_T
+    power1 = (barrier / S0) ** (2.0 * (mu + eta))
+    power2 = (barrier / S0) ** (2.0 * mu)
+    term1 = phi * S0 * np.exp(-dividend * T) * (norm.cdf(phi * x1) - power1 * norm.cdf(eta * y1))
+    term2 = phi * K * np.exp(-r * T) * (norm.cdf(phi * x1 - phi * sigma_sqrt_T) - power2 * norm.cdf(eta * y1 - eta * sigma_sqrt_T))
+    price = term1 - term2
+    return max(float(price), 0.0)
+
+
+def _barrier_monte_carlo_price(
+    option_type: str,
+    barrier_type: str,
+    S0: float,
+    K: float,
+    barrier: float,
+    T: float,
+    r: float,
+    dividend: float,
+    sigma: float,
+    n_paths: int,
+    n_steps: int,
+) -> float:
+    if barrier <= 0 or n_paths <= 0 or n_steps <= 0:
+        raise ValueError("Paramètres invalides pour le Monte Carlo barrière.")
+    if barrier_type == "up" and S0 >= barrier:
+        return 0.0
+    if barrier_type == "down" and S0 <= barrier:
+        return 0.0
+    dt = T / n_steps
+    drift = (r - dividend - 0.5 * sigma * sigma) * dt
+    diffusion = sigma * np.sqrt(dt)
+    discount = np.exp(-r * T)
+    payoffs = []
+    for _ in range(n_paths):
+        s = S0
+        knocked_out = False
+        for _ in range(n_steps):
+            z = np.random.normal()
+            s *= np.exp(drift + diffusion * z)
+            if barrier_type == "up" and s >= barrier:
+                knocked_out = True
+                break
+            if barrier_type == "down" and s <= barrier:
+                knocked_out = True
+                break
+        if knocked_out:
+            payoffs.append(0.0)
+            continue
+        if option_type.lower() in {"call", "c"}:
+            payoff = max(s - K, 0.0)
+        else:
+            payoff = max(K - s, 0.0)
+        payoffs.append(payoff)
+    return discount * (float(np.mean(payoffs)) if payoffs else 0.0)
 
 
 def _compute_lookback_exact_heatmap(
@@ -733,79 +820,163 @@ with tab_lookback:
 
 with tab_barrier:
     st.header("Options barrière")
+    tab_barrier_up, tab_barrier_down = st.tabs(["Up-and-out", "Down-and-out"])
 
-    tab_barrier_cn, tab_barrier_lb = st.tabs(
-        ["Crank–Nicolson (UNO / DNO)", "Up-and-out (fermée / MC / PDE)"]
-    )
-
-    with tab_barrier_cn:
-        st.subheader("Barrières type up-and-out / double knock-out")
-        barrier_type = st.selectbox(
-            "Type de barrière", ["UNO (Up-and-out)", "DNO (Double knock-out)"], key="barrier_type_cn"
-        )
-        cpflag_barrier = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_cn")
-        Hu_cn = st.number_input("Barrière haute Hu", value=120.0, min_value=0.01, key="Hu_cn")
-        Hd_cn = st.number_input("Barrière basse Hd", value=0.0, min_value=0.0, key="Hd_cn")
-
-        if st.button("Calculer (PDE Barrière)", key="btn_barrier_cn"):
-            barrier_flag = "UNO" if barrier_type.startswith("UNO") else "DNO"
-            price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
-                Typeflag=barrier_flag,
-                cpflag=cpflag_barrier,
-                S0=S0_common,
-                K=K_common,
-                Hu=Hu_cn,
-                Hd=Hd_cn,
-                T=T_common,
-                vol=sigma_common,
-                r=r_common,
-                d=d_common,
-            )
-            st.write(f"**Prix**: {price_b:.4f}")
-            st.write(f"**Delta**: {delta_b:.4f}")
-            st.write(f"**Gamma**: {gamma_b:.4f}")
-            st.write(f"**Theta**: {theta_b:.4f}")
-
-    with tab_barrier_lb:
-        st.subheader("Barrière up-and-out (module Lookback)")
-        t_barrier_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t_barrier_lb")
-        B_lb = st.number_input("B (barrière up-and-out)", value=120.0, min_value=0.01, key="B_lb")
-        method_barrier_lb = st.selectbox(
-            "Méthode de pricing",
+    with tab_barrier_up:
+        st.subheader("Up-and-out")
+        cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
+        cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
+        Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=0.01, key="Hu_up")
+        method_barrier_up = st.selectbox(
+            "Méthode de pricing (Up-and-out)",
             ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
-            key="method_barrier_lb",
+            key="method_barrier_up",
         )
-        n_iters_barrier = None
-        n_t_barrier = None
-        n_s_barrier = None
-        if method_barrier_lb == "Monte Carlo":
-            n_iters_barrier = st.number_input(
-                "Itérations Monte Carlo", value=10_000, min_value=100, key="n_iters_barrier_lb"
+        n_paths_up = None
+        n_steps_up = None
+        if method_barrier_up == "Monte Carlo":
+            n_paths_up = st.number_input(
+                "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_up"
             )
-        elif method_barrier_lb == "PDE Crank–Nicolson":
-            n_t_barrier = st.number_input("Pas de temps PDE n_t", value=200, min_value=10, key="n_t_barrier")
-            n_s_barrier = st.number_input("Pas d'espace PDE n_s", value=200, min_value=10, key="n_s_barrier")
+            n_steps_up = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_up")
 
-        if st.button("Calculer (Barrière UO)", key="btn_barrier_lb"):
-            barrier_lb = barrier_call_option(
-                T=T_common, t=t_barrier_lb, S0=S0_common, K=K_common, B=B_lb, r=r_common, sigma=sigma_common
-            )
-            if method_barrier_lb == "Exacte (fermée)":
-                price_barrier_exact = barrier_lb.price_exact()
-                st.write(f"**Prix exact barrière**: {price_barrier_exact:.6f}")
-            elif method_barrier_lb == "Monte Carlo":
-                price_barrier_mc = barrier_lb.price_monte_carlo(int(n_iters_barrier))
-                st.write(f"**Prix Monte Carlo barrière**: {price_barrier_mc:.6f}")
+        if st.button("Calculer (Up-and-out)", key="btn_barrier_up"):
+            if method_barrier_up == "Exacte (fermée)":
+                try:
+                    price = _barrier_closed_form_price(
+                        option_type=cpflag_barrier_up_char,
+                        barrier_type="up",
+                        S0=S0_common,
+                        K=K_common,
+                        barrier=Hu_up,
+                        T=T_common,
+                        r=r_common,
+                        dividend=d_common,
+                        sigma=sigma_common,
+                    )
+                    st.write(f"**Prix exact barrière**: {price:.6f}")
+                except ValueError as exc:
+                    st.error(f"Paramètres invalides pour la formule fermée: {exc}")
+            elif method_barrier_up == "Monte Carlo":
+                with st.spinner("Simulation Monte Carlo en cours..."):
+                    price = _barrier_monte_carlo_price(
+                        option_type=cpflag_barrier_up_char,
+                        barrier_type="up",
+                        S0=S0_common,
+                        K=K_common,
+                        barrier=Hu_up,
+                        T=T_common,
+                        r=r_common,
+                        dividend=d_common,
+                        sigma=sigma_common,
+                        n_paths=int(n_paths_up),
+                        n_steps=int(n_steps_up),
+                    )
+                st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
             else:
-                barrier_lb.price_pde(int(n_t_barrier), int(n_s_barrier))
-                price_barrier_pde = barrier_lb.get_pde_result(S0_common)
-                st.write(f"**Prix PDE barrière**: {price_barrier_pde:.6f}")
+                with st.spinner("Résolution PDE (Up-and-out)..."):
+                    price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
+                        Typeflag="UO",
+                        cpflag=cpflag_barrier_up_char,
+                        S0=S0_common,
+                        K=K_common,
+                        Hu=Hu_up,
+                        Hd=0.0,
+                        T=T_common,
+                        vol=sigma_common,
+                        r=r_common,
+                        d=d_common,
+                    )
+                st.write(f"**Prix PDE**: {price_b:.6f}")
+                st.write(f"**Delta**: {delta_b:.6f}")
+                st.write(f"**Gamma**: {gamma_b:.6f}")
+                st.write(f"**Theta**: {theta_b:.6f}")
+
+    with tab_barrier_down:
+        st.subheader("Down-and-out")
+        cpflag_barrier_down = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down")
+        cpflag_barrier_down_char = "c" if cpflag_barrier_down == "Call" else "p"
+        Hd_down = st.number_input(
+            "Barrière basse Hd", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down"
+        )
+        method_barrier_down = st.selectbox(
+            "Méthode de pricing (Down-and-out)",
+            ["Exacte (fermée)", "Monte Carlo", "PDE Crank–Nicolson"],
+            key="method_barrier_down",
+        )
+        n_paths_down = None
+        n_steps_down = None
+        if method_barrier_down == "Monte Carlo":
+            n_paths_down = st.number_input(
+                "Trajectoires Monte Carlo", value=20_000, min_value=500, step=500, key="n_paths_barrier_down"
+            )
+            n_steps_down = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_down")
+
+        if st.button("Calculer (Down-and-out)", key="btn_barrier_down"):
+            if method_barrier_down == "Exacte (fermée)":
+                try:
+                    price = _barrier_closed_form_price(
+                        option_type=cpflag_barrier_down_char,
+                        barrier_type="down",
+                        S0=S0_common,
+                        K=K_common,
+                        barrier=Hd_down,
+                        T=T_common,
+                        r=r_common,
+                        dividend=d_common,
+                        sigma=sigma_common,
+                    )
+                    st.write(f"**Prix exact barrière**: {price:.6f}")
+                except ValueError as exc:
+                    st.error(f"Paramètres invalides pour la formule fermée: {exc}")
+            elif method_barrier_down == "Monte Carlo":
+                with st.spinner("Simulation Monte Carlo en cours..."):
+                    price = _barrier_monte_carlo_price(
+                        option_type=cpflag_barrier_down_char,
+                        barrier_type="down",
+                        S0=S0_common,
+                        K=K_common,
+                        barrier=Hd_down,
+                        T=T_common,
+                        r=r_common,
+                        dividend=d_common,
+                        sigma=sigma_common,
+                        n_paths=int(n_paths_down),
+                        n_steps=int(n_steps_down),
+                    )
+                st.write(f"**Prix Monte Carlo barrière**: {price:.6f}")
+            else:
+                with st.spinner("Résolution PDE (Down-and-out)..."):
+                    Hu_temp = max(Hd_down * 5.0, S0_common * 3.0, K_common * 3.0)
+                    price_b, delta_b, gamma_b, theta_b = CN_Barrier_option(
+                        Typeflag="DO",
+                        cpflag=cpflag_barrier_down_char,
+                        S0=S0_common,
+                        K=K_common,
+                        Hu=Hu_temp,
+                        Hd=Hd_down,
+                        T=T_common,
+                        vol=sigma_common,
+                        r=r_common,
+                        d=d_common,
+                    )
+                st.write(f"**Prix PDE**: {price_b:.6f}")
+                st.write(f"**Delta**: {delta_b:.6f}")
+                st.write(f"**Gamma**: {gamma_b:.6f}")
+                st.write(f"**Theta**: {theta_b:.6f}")
 
 
 with tab_bermudan:
     st.header("Option bermudéenne")
     cpflag_bmd = st.selectbox("Call / Put (bermuda)", ["Call", "Put"], key="cpflag_bmd")
     cpflag_bmd_char = "c" if cpflag_bmd == "Call" else "p"
+    n_ex_dates_bmd = st.number_input(
+        "Nombre de dates d'exercice Bermude",
+        value=6,
+        min_value=2,
+        help="Les dates sont réparties uniformément sur la grille PDE (incluant l'échéance).",
+        key="n_ex_dates_bmd",
+    )
 
     if st.button("Calculer (PDE Bermuda)", key="btn_bmd_cn"):
         model_bmd = CrankNicolsonBS(
@@ -817,6 +988,7 @@ with tab_bermudan:
             vol=sigma_common,
             r=r_common,
             d=d_common,
+            n_exercise_dates=int(n_ex_dates_bmd),
         )
         price_bmd, delta_bmd, gamma_bmd, theta_bmd = model_bmd.CN_option_info()
         st.write(f"**Prix**: {price_bmd:.4f}")
