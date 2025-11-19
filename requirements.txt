@@ -7,3 +7,5 @@ ipywidgets
 pandas
 yfinance
 tensorflow
+plotly
+torch
