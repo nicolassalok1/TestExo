@@ -339,38 +339,6 @@ def _compute_bsm_heatmaps(
     return call_matrix, put_matrix
 
 
-def _compute_cn_heatmaps(
-    s_values: np.ndarray, k_values: np.ndarray, maturity: float, sigma: float, rate: float, dividend: float
-) -> tuple[np.ndarray, np.ndarray]:
-    call_matrix = np.zeros((len(k_values), len(s_values)))
-    put_matrix = np.zeros_like(call_matrix)
-    for i, strike in enumerate(k_values):
-        for j, spot in enumerate(s_values):
-            call_model = CrankNicolsonBS(
-                Typeflag="Eu",
-                cpflag="c",
-                S0=spot,
-                K=strike,
-                T=maturity,
-                vol=sigma,
-                r=rate,
-                d=dividend,
-            )
-            put_model = CrankNicolsonBS(
-                Typeflag="Eu",
-                cpflag="p",
-                S0=spot,
-                K=strike,
-                T=maturity,
-                vol=sigma,
-                r=rate,
-                d=dividend,
-            )
-            call_matrix[i, j] = call_model.CN_option_info()[0]
-            put_matrix[i, j] = put_model.CN_option_info()[0]
-    return call_matrix, put_matrix
-
-
 def _compute_mc_heatmaps(
     s_values: np.ndarray,
     k_values: np.ndarray,
@@ -426,23 +394,17 @@ tab_european, tab_american, tab_lookback, tab_barrier, tab_bermudan = st.tabs(
 
 with tab_european:
     st.header("Option européenne")
-    cpflag_eu = st.selectbox("Call / Put (européenne)", ["Call", "Put"], key="cpflag_eu")
-    cpflag_eu_char = "c" if cpflag_eu == "Call" else "p"
-    option_eu = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_eu == "Call")
     st.caption(
         "Les heatmaps affichent les prix call / put sur un carré Spot × Strike centré autour du spot défini dans la"
         " barre latérale."
     )
 
-    tab_eu_bsm, tab_eu_cn, tab_eu_mc = st.tabs(
-        ["Black–Scholes–Merton", "PDE Crank–Nicolson", "Monte Carlo"]
+    tab_eu_bsm, tab_eu_mc = st.tabs(
+        ["Black–Scholes–Merton", "Monte Carlo"]
     )
 
     with tab_eu_bsm:
         st.subheader("Formule fermée BSM")
-        if st.button("Calculer (BSM)", key="btn_eu_bsm"):
-            price_bsm = black_scholes_merton(r=r_common - d_common, sigma=sigma_common, option=option_eu)
-            st.write(f"**Prix BSM**: {price_bsm:.4f}")
         call_heatmap_bsm, put_heatmap_bsm = _compute_bsm_heatmaps(
             heatmap_spot_values,
             heatmap_strike_values,
@@ -452,50 +414,10 @@ with tab_european:
         )
         _render_call_put_heatmaps("BSM", call_heatmap_bsm, put_heatmap_bsm, heatmap_spot_values, heatmap_strike_values)
 
-    with tab_eu_cn:
-        st.subheader("PDE Crank–Nicolson")
-        if st.button("Calculer (PDE)", key="btn_eu_cn"):
-            model_cn = CrankNicolsonBS(
-                Typeflag="Eu",
-                cpflag=cpflag_eu_char,
-                S0=S0_common,
-                K=K_common,
-                T=T_common,
-                vol=sigma_common,
-                r=r_common,
-                d=d_common,
-            )
-            price_cn, delta_cn, gamma_cn, theta_cn = model_cn.CN_option_info()
-            st.write(f"**Prix**: {price_cn:.4f}")
-            st.write(f"**Delta**: {delta_cn:.4f}")
-            st.write(f"**Gamma**: {gamma_cn:.4f}")
-            st.write(f"**Theta**: {theta_cn:.4f}")
-        with st.spinner("Calcul des heatmaps PDE"):
-            call_heatmap_cn, put_heatmap_cn = _compute_cn_heatmaps(
-                heatmap_spot_values,
-                heatmap_strike_values,
-                T_common,
-                sigma_common,
-                r_common,
-                d_common,
-            )
-        _render_call_put_heatmaps(
-            "PDE Crank–Nicolson", call_heatmap_cn, put_heatmap_cn, heatmap_spot_values, heatmap_strike_values
-        )
-
     with tab_eu_mc:
         st.subheader("Monte Carlo classique")
         n_paths_eu = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_eu")
         n_steps_eu = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_eu")
-        if st.button("Calculer (MC)", key="btn_eu_mc"):
-            process_eu = GeometricBrownianMotion(mu=r_common - d_common, sigma=sigma_common)
-            price_mc_eu = monte_carlo_simulation(
-                option=option_eu,
-                process=process_eu,
-                n=int(n_paths_eu),
-                m=int(n_steps_eu),
-            )
-            st.write(f"**Prix Monte Carlo**: {price_mc_eu:.4f}")
         with st.spinner("Calcul des heatmaps Monte Carlo"):
             call_heatmap_mc, put_heatmap_mc = _compute_mc_heatmaps(
                 heatmap_spot_values,
