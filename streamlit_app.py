@@ -2389,12 +2389,18 @@ def ui_heston_full_pipeline():
                 )
             if not np.isfinite(sigma_pick):
                 sigma_pick = float(st.session_state.get("sigma_common", 0.2))
-            st.session_state["heston_sidebar_prefill"] = {
+            prefills = {
                 "S0_common": float(S0_ref),
                 "K_common": chosen_K,
                 "sigma_common": float(np.clip(sigma_pick, 0.01, 5.0)),
-                "T_common_select": chosen_T,
             }
+            st.session_state["heston_sidebar_prefill"] = prefills
+            st.session_state["heston_sidebar_placeholders"] = {
+                "S0_common": f"{prefills['S0_common']:.2f}",
+                "K_common": f"{prefills['K_common']:.2f}",
+                "sigma_common": f"{prefills['sigma_common']:.4f}",
+            }
+            st.rerun()
         except Exception as exc:
             st.error(f"❌ Erreur lors du téléchargement des données CBOE : {exc}")
 
@@ -2828,10 +2834,29 @@ if sidebar_prefill:
 st.title("Application unifiée de pricing d'options")
 
 st.sidebar.header("Paramètres communs")
-S0_common = st.sidebar.number_input("S0 (spot)", value=100.0, min_value=0.01, key="S0_common")
-K_common = st.sidebar.number_input("K (strike)", value=100.0, min_value=0.01, key="K_common")
+placeholder_vals = st.session_state.get("heston_sidebar_placeholders", {})
+S0_common = st.sidebar.number_input(
+    "S0 (spot)",
+    value=100.0,
+    min_value=0.01,
+    key="S0_common",
+    placeholder=placeholder_vals.get("S0_common"),
+)
+K_common = st.sidebar.number_input(
+    "K (strike)",
+    value=100.0,
+    min_value=0.01,
+    key="K_common",
+    placeholder=placeholder_vals.get("K_common"),
+)
 T_common = st.sidebar.number_input("T (maturité, années)", value=1.0, min_value=0.01, key="T_common")
-sigma_common = st.sidebar.number_input("Volatilité σ", value=0.2, min_value=0.0001, key="sigma_common")
+sigma_common = st.sidebar.number_input(
+    "Volatilité σ",
+    value=0.2,
+    min_value=0.0001,
+    key="sigma_common",
+    placeholder=placeholder_vals.get("sigma_common"),
+)
 r_common = st.sidebar.number_input("Taux sans risque r", value=0.05, key="r_common")
 d_common = st.sidebar.number_input("Dividende continu d", value=0.0, key="d_common")
 heatmap_span = st.sidebar.number_input(
