@@ -43,6 +43,12 @@ HES_DEVICE = torch.device("cpu")
 MIN_IV_MATURITY = 0.1
 
 
+PLOTLY_CONFIG = {
+    "displaylogo": False,
+    "modeBarButtonsToRemove": ["sendDataToCloud"],
+}
+
+
 def simulate_gbm_paths(S0, r, q, sigma, T, M, N_paths, seed=42):
     """
     Simulate GBM paths under the risk-neutral measure:
@@ -2917,15 +2923,15 @@ def ui_heston_full_pipeline():
                 st.subheader("Carr-Madan : IV & prix (Calls)")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.plotly_chart(fig_call_cm, width="stretch")
+                    st.plotly_chart(fig_call_cm, width="stretch", config=PLOTLY_CONFIG)
                 with c2:
-                    st.plotly_chart(fig_heat_call_cm, width="stretch")
+                    st.plotly_chart(fig_heat_call_cm, width="stretch", config=PLOTLY_CONFIG)
 
                 st.subheader("Marché : IV & prix (Calls)")
                 c3, c4 = st.columns(2)
                 with c3:
                     if fig_call_market:
-                        st.plotly_chart(fig_call_market, width="stretch")
+                        st.plotly_chart(fig_call_market, width="stretch", config=PLOTLY_CONFIG)
                     else:
                         st.info("Pas assez de points marché pour la surface call.")
                 with c4:
@@ -2944,7 +2950,7 @@ def ui_heston_full_pipeline():
                             ]
                         )
                         fig_heat_call_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
-                        st.plotly_chart(fig_heat_call_mkt, width="stretch")
+                        st.plotly_chart(fig_heat_call_mkt, width="stretch", config=PLOTLY_CONFIG)
                     else:
                         st.info("Pas assez de points marché pour la heatmap call.")
 
@@ -2962,15 +2968,15 @@ def ui_heston_full_pipeline():
                 st.subheader("Carr-Madan : IV & prix (Puts)")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.plotly_chart(fig_put_cm, width="stretch")
+                    st.plotly_chart(fig_put_cm, width="stretch", config=PLOTLY_CONFIG)
                 with c2:
-                    st.plotly_chart(fig_heat_put_cm, width="stretch")
+                    st.plotly_chart(fig_heat_put_cm, width="stretch", config=PLOTLY_CONFIG)
 
                 st.subheader("Marché : IV & prix (Puts)")
                 c3, c4 = st.columns(2)
                 with c3:
                     if fig_put_market:
-                        st.plotly_chart(fig_put_market, width="stretch")
+                        st.plotly_chart(fig_put_market, width="stretch", config=PLOTLY_CONFIG)
                     else:
                         st.info("Pas assez de points marché pour la surface put.")
                 with c4:
@@ -2989,7 +2995,7 @@ def ui_heston_full_pipeline():
                             ]
                         )
                         fig_heat_put_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
-                        st.plotly_chart(fig_heat_put_mkt, width="stretch")
+                        st.plotly_chart(fig_heat_put_mkt, width="stretch", config=PLOTLY_CONFIG)
                     else:
                         st.info("Pas assez de points marché pour la heatmap put.")
 
@@ -3023,6 +3029,15 @@ if sidebar_prefill:
 
 
 st.title("Application unifiée de pricing d'options")
+st.markdown(
+    """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.sidebar.header("Paramètres communs")
 placeholder_vals = st.session_state.get("heston_sidebar_placeholders", {})
