@@ -2686,6 +2686,7 @@ def ui_heston_full_pipeline():
                     )
                 ]
             )
+            fig_heat_call_cm.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
             fig_heat_put_cm = go.Figure(
                 data=[
                     go.Heatmap(
@@ -2699,6 +2700,7 @@ def ui_heston_full_pipeline():
                     )
                 ]
             )
+            fig_heat_put_cm.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
 
             with tab_calls:
                 st.subheader("Carr-Madan : IV & prix (Calls)")
@@ -2730,6 +2732,7 @@ def ui_heston_full_pipeline():
                                 )
                             ]
                         )
+                        fig_heat_call_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
                         st.plotly_chart(fig_heat_call_mkt, use_container_width=True)
                     else:
                         st.info("Pas assez de points marché pour la heatmap call.")
@@ -2774,6 +2777,7 @@ def ui_heston_full_pipeline():
                                 )
                             ]
                         )
+                        fig_heat_put_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
                         st.plotly_chart(fig_heat_put_mkt, use_container_width=True)
                     else:
                         st.info("Pas assez de points marché pour la heatmap put.")
