@@ -2849,7 +2849,12 @@ K_common = st.sidebar.number_input(
     key="K_common",
     placeholder=placeholder_vals.get("K_common"),
 )
-T_common = st.sidebar.number_input("T (maturité, années)", value=1.0, min_value=0.01, key="T_common")
+T_common = st.sidebar.number_input(
+    "T (maturité, années)",
+    value=1.0,
+    min_value=0.01,
+    key="T_common",
+)
 sigma_common = st.sidebar.number_input(
     "Volatilité σ",
     value=0.2,
@@ -2902,9 +2907,7 @@ with tab_european:
         " barre latérale."
     )
 
-    tab_eu_heston, tab_eu_bsm, tab_eu_mc = st.tabs(
-        ["Heston", "Black–Scholes–Merton", "Monte Carlo"]
-    )
+    tab_eu_heston, tab_eu_bsm, tab_eu_mc = st.tabs(["Heston", "Black–Scholes–Merton", "Monte Carlo"])
 
     with tab_eu_heston:
         ui_heston_full_pipeline()
