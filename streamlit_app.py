@@ -1719,6 +1719,18 @@ def compute_asian_price(
 
 def ui_basket_surface(spot_common, maturity_common, rate_common, strike_common):
     st.header("Basket – Pricing NN + corrélation (3 actifs)")
+    render_unlock_sidebar_button("tab_basket", "🔓 Réactiver T (onglet Basket)")
+    render_section_explainer(
+        "🧺 Comment fonctionne le pricing Basket ?",
+        (
+            "- **Produit** : option écrite sur un panier d'actifs, dont la valeur dépend de plusieurs sous-jacents simultanément.\n"
+            "- **Corrélation** : la co-mouvance entre titres (via la matrice de corrélation empirique) a un impact majeur sur le prix.\n"
+            "- **Dataset** : on génère un grand nombre de scénarios simulés (ou basés sur les historiques) pour construire un jeu d'entraînement.\n"
+            "- **Labels de prix** : chaque scenario est pricé via Black–Scholes multi-actifs ou Monte Carlo (suivant le paramètre `method`).\n"
+            "- **Réseau de neurones** : un modèle NN est ensuite ajusté pour approximer la fonction de prix en fonction des paramètres d'entrée.\n"
+            "- **Objectif** : disposer d'un pricer rapide utilisable en temps réel, tout en gardant une traçabilité claire des hypothèses (volatilités, corrélations, structure du panier)."
+        ),
+    )
 
     min_assets, max_assets = 2, 10
     closing_path = Path("data/closing_prices.csv")
@@ -1925,6 +1937,18 @@ def ui_asian_options(
     rate_common,
 ):
     st.header("Options asiatiques (module Asian)")
+    render_unlock_sidebar_button("tab_asian", "🔓 Réactiver T (onglet Asian)")
+    render_section_explainer(
+        "🌏 Options asiatiques en bref",
+        (
+            "- **Produit** : payoff calculé à partir de la moyenne arithmétique des prix du sous-jacent sur la vie de l'option.\n"
+            "- **Effet principal** : la moyenne lisse les à-coups de marché et réduit la sensibilité aux pics de volatilité.\n"
+            "- **Méthode de calcul** : Monte Carlo avec antithétiques et contrôle par une option géométrique ou européenne analytique.\n"
+            "- **Étapes** : pour chaque trajectoire, on agrège la moyenne des `S_t`, on en déduit le payoff (call ou put) puis on actualise et on moyenne.\n"
+            "- **Paramètres** : nombre d'observations `n_obs` par trajectoire, nombre de trajectoires et choix de la base de contrôle.\n"
+            "- **Heatmaps** : montrent comment le lissage de la moyenne interagit avec K et T, par rapport aux prix européens standards."
+        ),
+    )
 
     if spot_default is None:
         st.warning("Aucun téléchargement yfinance : utilisez le spot commun.")
@@ -2318,6 +2342,20 @@ def build_market_price_grid(
     return grid
 
 
+def render_section_explainer(title: str, body: str) -> None:
+    """Affiche un menu déroulant descriptif pour guider l'utilisateur."""
+    with st.expander(title):
+        st.markdown(body)
+
+
+def render_unlock_sidebar_button(context_key: str, label: str) -> None:
+    """Affiche un bouton permettant de réactiver l'input T lorsque Heston a verrouillé la barre latérale."""
+    if st.session_state.get("heston_tab_locked"):
+        if st.button(label, key=f"unlock_sidebar_{context_key}"):
+            st.session_state["heston_tab_locked"] = False
+            st.rerun()
+
+
 
 def ui_heston_full_pipeline():
     st.header("🚀 Surface IV Heston : CBOE → Calibration NN → Carr-Madan")
@@ -2326,6 +2364,21 @@ def ui_heston_full_pipeline():
         "1️⃣ Téléchargement des options CBOE (données retardées)\n"
         "2️⃣ Calibration Heston (NN Carr-Madan) ciblée sur la zone d'analyse\n"
         "3️⃣ Surfaces IV Carr-Madan vs Marché + heatmaps de prix\n"
+    )
+    render_section_explainer(
+        "🧠 Comprendre le pipeline Heston",
+        (
+            "- **Produit étudié** : options européennes vanilla (calls / puts) sur un ticker CBOE réel.\n"
+            "- **Données d'entrée** : spot, strikes, maturités filtrées, volatilité implicite fournie par CBOE et prix mid.\n"
+            "- **Paramétrisation Heston** : on travaille sur des paramètres non contraints, transformés en `(κ, θ, σ, ρ, v0)` "
+            "pour garantir les conditions de Feller et la positivité de la variance.\n"
+            "- **Calibration** : un réseau de neurones ajuste ces paramètres pour minimiser l'écart entre prix Carr–Madan et "
+            "prix de marché sur une bande en `T` et en moneyness autour de `S0`.\n"
+            "- **Carr–Madan** : la formule FFT donne rapidement une grille de prix Heston en fonction du strike, pour chaque maturité.\n"
+            "- **Post-traitement** : les prix Heston sont inversés en volatilité implicite via Black–Scholes pour obtenir une surface IV lisse.\n"
+            "- **Comparaison** : la surface IV modèle est affichée face à la surface IV marché interpolée, ainsi que les heatmaps de prix.\n"
+            "- **Lecture** : utilisez ces cartes pour juger la qualité de fit dans la zone ATM et sur les ailes (smile / skew)."
+        ),
     )
 
     col_cfg1, col_cfg2 = st.columns(2)
@@ -2835,6 +2888,7 @@ st.title("Application unifiée de pricing d'options")
 
 st.sidebar.header("Paramètres communs")
 placeholder_vals = st.session_state.get("heston_sidebar_placeholders", {})
+heston_tab_locked = st.session_state.get("heston_tab_locked", False)
 S0_common = st.sidebar.number_input(
     "S0 (spot)",
     value=100.0,
@@ -2854,6 +2908,8 @@ T_common = st.sidebar.number_input(
     value=1.0,
     min_value=0.01,
     key="T_common",
+    disabled=heston_tab_locked,
+    help="Verrouillé après le téléchargement Heston : cliquez sur un autre onglet pour réactiver." if heston_tab_locked else None,
 )
 sigma_common = st.sidebar.number_input(
     "Volatilité σ",
@@ -2913,6 +2969,19 @@ with tab_european:
         ui_heston_full_pipeline()
 
     with tab_eu_bsm:
+        render_unlock_sidebar_button("eu_bsm", "🔓 Réactiver T (onglet BSM)")
+        render_section_explainer(
+            "📘 Rappel sur Black–Scholes–Merton",
+            (
+                "- **Produit** : options européennes plain vanilla (un seul exercice possible à maturité).\n"
+                "- **Hypothèse clé** : le sous-jacent suit un mouvement brownien géométrique (log-normal), avec `σ` constant.\n"
+                "- **Variables de prix** : le prix dépend uniquement de `(S0, K, T, r, d, σ)` sous mesure neutre au risque.\n"
+                "- **Formule fermée** : les quantités `d1` et `d2` sont utilisées pour calculer le prix via les fonctions de répartition de la loi normale.\n"
+                "- **Rôle de `r` et `d`** : `r` actualise les flux, `d` représente un dividende continu qui réduit le drift sous-jacent.\n"
+                "- **Interprétation des heatmaps** : on visualise comment le prix varie lorsque l'on balaie les strikes et maturités autour du spot.\n"
+                "- **Utilisation pratique** : ce panneau sert de référence pour comparer les modèles plus avancés (Heston, MC, etc.)."
+            ),
+        )
         st.subheader("Formule fermée BSM")
         call_heatmap_bsm, put_heatmap_bsm = _compute_bsm_heatmaps(
             heatmap_spot_values,
@@ -2924,6 +2993,19 @@ with tab_european:
         _render_call_put_heatmaps("BSM", call_heatmap_bsm, put_heatmap_bsm, heatmap_spot_values, heatmap_strike_values)
 
     with tab_eu_mc:
+        render_unlock_sidebar_button("eu_mc", "🔓 Réactiver T (onglet Monte Carlo)")
+        render_section_explainer(
+            "🎲 Monte Carlo européen",
+            (
+                "- **Produit** : mêmes options européennes que dans le panneau BSM.\n"
+                "- **Idée générale** : plutôt que la formule fermée, on simule un grand nombre de trajectoires du sous-jacent.\n"
+                "- **Schéma temporel** : la dynamique `dS_t = (r-d)S_t dt + σ S_t dW_t` est discrétisée sur `M` pas.\n"
+                "- **Prix estimé** : on calcule le payoff `max(±(S_T-K),0)` sur chaque trajectoire, puis on moyenne et on actualise par `e^{-rT}`.\n"
+                "- **Contrôle de la précision** : augmenter `N` (trajectoires) réduit la variance mais augmente le temps de calcul.\n"
+                "- **Intérêt pédagogique** : permet de tester des extensions (barrières, payoffs path-dependant) en gardant la même infrastructure.\n"
+                "- **Comparaison** : les heatmaps permettent de vérifier que MC converge bien vers la formule BSM lorsque `N` est élevé."
+            ),
+        )
         st.subheader("Monte Carlo classique")
         n_paths_eu = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_eu")
         n_steps_eu = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_eu")
@@ -2943,6 +3025,19 @@ with tab_european:
 
 with tab_american:
     st.header("Option américaine")
+    render_unlock_sidebar_button("tab_american", "🔓 Réactiver T (onglet Américain)")
+    render_section_explainer(
+        "📗 Rappel sur les options américaines",
+        (
+            "- **Produit** : option pouvant être exercée à tout moment jusqu'à la maturité (flexibilité maximale).\n"
+            "- **Conséquence** : le prix américain est au moins égal au prix européen correspondant (même sous-jacent, même paramètres).\n"
+            "- **Deux approches dans cet onglet** :\n"
+            "  • Longstaff–Schwartz : estimation de la stratégie optimale par régression Monte Carlo.\n"
+            "  • CRR : arbre binomial recombina nt, évalué par rétro-propagation.\n"
+            "- **Lien avec les grecs** : la possibilité d'exercice anticipé modifie le profil de Delta et Theta, en particulier pour les puts.\n"
+            "- **Usage des heatmaps** : observer l'impact de `S0` et `K` sur la prime d'exercice anticipé."
+        ),
+    )
     cpflag_am = st.selectbox("Call / Put (américaine)", ["Call", "Put"], key="cpflag_am")
     cpflag_am_char = "c" if cpflag_am == "Call" else "p"
     st.caption(
@@ -2955,6 +3050,17 @@ with tab_american:
 
     with tab_am_ls:
         st.subheader("Monte Carlo Longstaff–Schwartz")
+        render_section_explainer(
+            "🧮 Explication Longstaff–Schwartz",
+            (
+                "- **Étape 1** : simuler un grand nombre de trajectoires du sous-jacent (GBM ou Heston) jusqu'à l'échéance.\n"
+                "- **Étape 2** : partir de la dernière date d'exercice possible et remonter dans le temps (backward induction).\n"
+                "- **Régression** : à chaque date, on approxime la valeur de continuation par une régression des payoffs futurs sur des fonctions de `S_t`.\n"
+                "- **Règle d'exercice** : on exerce si le payoff immédiat est supérieur à la valeur de continuation régressée.\n"
+                "- **Impact des hyperparamètres** : trop peu de trajectoires ou de bases de régression peut biaiser la décision d'exercice.\n"
+                "- **Comparaison Heston vs GBM** : le processus Heston permet de capter un sourire de volatilité dans les trajectoires MC."
+            ),
+        )
         process_type_am = st.selectbox(
             "Processus sous-jacent", ["Geometric Brownian Motion", "Heston"], key="process_type_am"
         )
@@ -2990,6 +3096,17 @@ with tab_american:
 
     with tab_am_crr:
         st.subheader("Arbre binomial CRR")
+        render_section_explainer(
+            "🌳 Méthode CRR",
+            (
+                "- **Construction de l'arbre** : à chaque pas, le sous-jacent peut monter (`u`) ou descendre (`d`) avec des probabilités neutres au risque.\n"
+                "- **Paramétrage** : `u` et `d` sont choisis pour reproduire la volatilité BSM sur l'horizon considéré.\n"
+                "- **Rétro-propagation** : on initialise les payoffs à maturité, puis on remonte nœud par nœud en actualisant la valeur.\n"
+                "- **Spécificité américaine** : à chaque nœud, on prend le maximum entre la valeur d'exercice immédiat et la valeur de continuation.\n"
+                "- **Visualisation** : l'arbre affiché permet de voir où l'exercice anticipé devient optimal.\n"
+                "- **Utilisation** : méthode déterministe et pédagogique, utile pour valider les résultats Monte Carlo sur des tailles d'arbre modestes."
+            ),
+        )
         n_tree_am = st.number_input("Nombre de pas de l'arbre", value=10, min_value=5, key="n_tree_am")
         option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
         int_n_tree = int(n_tree_am)
@@ -3023,6 +3140,18 @@ with tab_american:
 
 with tab_lookback:
     st.header("Options lookback (floating strike)")
+    render_unlock_sidebar_button("tab_lookback", "🔓 Réactiver T (onglet Lookback)")
+    render_section_explainer(
+        "🔍 Principes des options lookback",
+        (
+            "- **Produit** : option dont le payoff dépend du chemin complet du sous-jacent (max ou min historique) et non seulement de `S_T`.\n"
+            "- **Floating strike** : le strike est lié à l'extrême atteint, par exemple `K = max_t S_t` pour certaines structures.\n"
+            "- **Intuition** : ces produits assurent contre des mouvements extrêmes en intégrant la meilleure (ou pire) réalisation passée.\n"
+            "- **Deux approches** : section analytique (formule fermée) et section Monte Carlo (simulation de trajectoires).\n"
+            "- **Sensibilité** : la maturité allonge la fenêtre sur laquelle les extrêmes peuvent se réaliser, ce qui renchérit l'option.\n"
+            "- **Heatmaps** : permettent de voir comment le prix lookback réagit aux variations conjointes de `S0` et `T`."
+        ),
+    )
     st.caption(
         "Les heatmaps affichent les prix lookback sur un carré Spot × Maturité centré autour des valeurs définies dans la barre latérale."
     )
@@ -3031,6 +3160,16 @@ with tab_lookback:
 
     with tab_lb_exact:
         st.subheader("Formule exacte")
+        render_section_explainer(
+            "📗 Formulation analytique",
+            (
+                "- **Cadre** : même dynamique de base que Black–Scholes, mais on exploite des résultats sur la distribution du maximum/minimum.\n"
+                "- **Résultat** : on obtient des formules fermées pour certains payoffs lookback, en combinant termes de diffusion et termes liés aux extrêmes.\n"
+                "- **Hypothèses** : volatilité constante, absence de sauts et taux / dividendes constants.\n"
+                "- **Utilisation** : sert de référence de \"vérité terrain\" pour vérifier la qualité des simulations MC.\n"
+                "- **Limites** : la formule devient rapidement complexe dès que l'on s'écarte du cadre standard (barrières, coupons, etc.)."
+            ),
+        )
         t0_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t0_lb_exact")
         with st.spinner("Calcul de la heatmap exacte"):
             heatmap_lb_exact = _compute_lookback_exact_heatmap(
@@ -3045,6 +3184,16 @@ with tab_lookback:
 
     with tab_lb_mc:
         st.subheader("Monte Carlo lookback")
+        render_section_explainer(
+            "🎲 Lookback par Monte Carlo",
+            (
+                "- **Principe** : simuler de nombreuses trajectoires GBM et, pour chacune, mémoriser l'extrême `max_t S_t` ou `min_t S_t`.\n"
+                "- **Payoff** : calculé en fin de trajectoire à partir de cet extrême, puis actualisé et moyenné sur l'ensemble des chemins.\n"
+                "- **Contrôle de biais** : plus la grille temporelle est fine, mieux on capture les extrêmes (au prix d'un temps de calcul plus long).\n"
+                "- **Paramètres de robustesse** : le nombre d'itérations Monte Carlo doit être suffisant pour stabiliser la moyenne.\n"
+                "- **Comparaison** : confrontez les résultats avec la section analytique pour valider la mise en œuvre numérique."
+            ),
+        )
         t0_lb_mc = st.number_input("t (temps courant) MC", value=0.0, min_value=0.0, key="t0_lb_mc")
         n_iters_lb = st.number_input("Itérations Monte Carlo", value=1000, min_value=100, key="n_iters_lb_mc")
         with st.spinner("Calcul de la heatmap Monte Carlo"):
@@ -3062,6 +3211,18 @@ with tab_lookback:
 
 with tab_barrier:
     st.header("Options barrière")
+    render_unlock_sidebar_button("tab_barrier", "🔓 Réactiver T (onglet Barrière)")
+    render_section_explainer(
+        "🚧 Comprendre les barrières",
+        (
+            "- **Produit** : option dont l'existence ou l'extinction dépend du franchissement d'un niveau (barrière).\n"
+            "- **Knock-out** : l'option disparaît si la barrière est touchée (plus de droit à l'échéance).\n"
+            "- **Knock-in** : l'option ne \"naît\" que si la barrière est atteinte au moins une fois.\n"
+            "- **Simulation** : on suit la trajectoire pas à pas, en vérifiant si la barrière a été franchie (up / down, in / out).\n"
+            "- **Impact du maillage** : plus le nombre de pas temporels est élevé, plus la détection des franchissements est fiable.\n"
+            "- **Usage typique** : structurer des produits de couverture ou de rendement conditionnel (barrières de protection)."
+        ),
+    )
     (
         tab_barrier_up_out,
         tab_barrier_down_out,
@@ -3071,6 +3232,16 @@ with tab_barrier:
 
     with tab_barrier_up_out:
         st.subheader("Up-and-out")
+        render_section_explainer(
+            "⬆️ Up-and-out en détail",
+            (
+                "- **Configuration** : barrière supérieure `Hu` au-dessus du spot initial.\n"
+                "- **Mécanisme** : si la trajectoire atteint ou dépasse `Hu` avant l'échéance, l'option est annulée.\n"
+                "- **Simulation** : à chaque pas, on teste `S_t > Hu` pour marquer le knock-out.\n"
+                "- **Sensibilité** : une barrière plus proche du spot rend l'option moins chère mais plus fragile.\n"
+                "- **Heatmap** : explorez différents couples `(Hu, T)` pour visualiser ce compromis."
+            ),
+        )
         cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
         Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
@@ -3100,6 +3271,15 @@ with tab_barrier:
 
     with tab_barrier_down_out:
         st.subheader("Down-and-out")
+        render_section_explainer(
+            "⬇️ Down-and-out expliqué",
+            (
+                "- **Configuration** : barrière basse `Hd` en dessous du spot.\n"
+                "- **Mécanisme** : l'option est détruite dès que `S_t` passe sous `Hd`.\n"
+                "- **Simulation** : on surveille `S_t < Hd` à chaque pas de la trajectoire.\n"
+                "- **Interprétation** : produit adapté pour capter un scénario haussier, tout en annulant la protection si la baisse est trop forte."
+            ),
+        )
         cpflag_barrier_down = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down")
         cpflag_barrier_down_char = "c" if cpflag_barrier_down == "Call" else "p"
         Hd_down = st.number_input(
@@ -3131,6 +3311,15 @@ with tab_barrier:
 
     with tab_barrier_up_in:
         st.subheader("Up-and-in")
+        render_section_explainer(
+            "⬆️ Knock-in (Up)",
+            (
+                "- **Activation** : le payoff n'existe que si `S_t` a touché `Hu` au moins une fois avant l'échéance.\n"
+                "- **Implémentation** : on garde un indicateur de knock-in, mis à 1 dès que la barrière est franchie.\n"
+                "- **Conséquence** : le prix est inférieur à l'option vanilla équivalente, car l'événement est conditionnel.\n"
+                "- **Lecture** : la dépendance à `Hu` et `T` illustre la probabilité de franchissement dans le modèle choisi."
+            ),
+        )
         cpflag_barrier_up_in = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up_in")
         cpflag_barrier_up_in_char = "c" if cpflag_barrier_up_in == "Call" else "p"
         Hu_up_in = st.number_input(
@@ -3165,6 +3354,15 @@ with tab_barrier:
 
     with tab_barrier_down_in:
         st.subheader("Down-and-in")
+        render_section_explainer(
+            "⬇️ Knock-in (Down)",
+            (
+                "- **Activation** : l'option ne devient active que si le sous-jacent a au moins une fois cassé `Hd`.\n"
+                "- **Simulation** : on suit la même logique de drapeau de knock-in que pour le cas Up, mais côté baisse.\n"
+                "- **Application** : souvent utilisé dans les produits structurés de type reverse ou corridor.\n"
+                "- **Sensibilité** : plus `Hd` est profonde, plus l'événement de knock-in est rare, donc la prime est réduite."
+            ),
+        )
         cpflag_barrier_down_in = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down_in")
         cpflag_barrier_down_in_char = "c" if cpflag_barrier_down_in == "Call" else "p"
         Hd_down_in = st.number_input(
@@ -3202,6 +3400,17 @@ with tab_barrier:
 
 with tab_bermudan:
     st.header("Option bermudéenne")
+    render_unlock_sidebar_button("tab_bermudan", "🔓 Réactiver T (onglet Bermuda)")
+    render_section_explainer(
+        "🏝️ Option Bermudéenne",
+        (
+            "- **Produit** : compromis entre européenne (un seul exercice) et américaine (exercice continu) : ici, exercice possible sur un calendrier discret.\n"
+            "- **Modèle** : on résout la PDE de Black–Scholes en imposant qu'à certaines dates, la valeur ne puisse être inférieure au payoff d'exercice.\n"
+            "- **Crank–Nicolson** : schéma implicite/explicite combiné, stable et précis pour la discrétisation en temps et en espace.\n"
+            "- **Condition d'exercice** : à chaque date bermudéenne, on prend le max entre valeur de continuation PDE et payoff immédiat.\n"
+            "- **Paramètre clé** : plus on ajoute de dates Bermudes, plus le prix se rapproche du prix américain."
+        ),
+    )
     cpflag_bmd = st.selectbox("Call / Put (bermuda)", ["Call", "Put"], key="cpflag_bmd")
     cpflag_bmd_char = "c" if cpflag_bmd == "Call" else "p"
     n_ex_dates_bmd = st.number_input(
