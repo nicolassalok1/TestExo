@@ -9,3 +9,4 @@ yfinance
 tensorflow
 plotly
 torch
+requests
