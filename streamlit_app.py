@@ -2332,36 +2332,12 @@ def ui_heston_full_pipeline():
     with col_cfg1:
         ticker = st.text_input("Ticker (sous-jacent)", value="SPY", key="heston_cboe_ticker").strip().upper()
         rf_rate = float(st.session_state.get("common_rate", 0.02))
-        st.number_input(
-            "Taux sans risque (r)",
-            value=rf_rate,
-            step=0.01,
-            format="%.3f",
-            disabled=True,
-            help="Synchronisé avec la barre latérale (« Taux sans risque r »).",
-        )
         div_yield = float(st.session_state.get("common_dividend", 0.0))
-        st.number_input(
-            "Dividende (q)",
-            value=div_yield,
-            step=0.01,
-            format="%.3f",
-            disabled=True,
-            help="Synchronisé avec la barre latérale (« Dividende continu d »).",
-        )
+
     with col_cfg2:
         span_mc = float(st.session_state.get("heatmap_span_value", 20.0))
-        st.number_input(
-            "Span autour de S0 pour les grilles K",
-            value=span_mc,
-            min_value=5.0,
-            max_value=100.0,
-            step=5.0,
-            disabled=True,
-            help="Synchronisé avec la valeur de la barre latérale « Span autour du spot (heatmaps) ».",
-        )
         n_maturities = 40
-        st.caption(f"Points maturité (Carr-Madan) : {n_maturities}")
+
 
     state = st.session_state
     if "heston_calls_df" not in state:
@@ -2381,6 +2357,44 @@ def ui_heston_full_pipeline():
             state.heston_S0_ref = S0_ref
             st.info(f"📡 Données CBOE chargées pour {ticker} (cache)")
             st.success(f"{len(calls_df)} calls, {len(puts_df)} puts | S0 ≈ {S0_ref:.2f}")
+            maturity_list = sorted(calls_df["T"].round(2).unique().tolist())
+            st.session_state["sidebar_maturity_options"] = maturity_list
+            span_sync = float(st.session_state.get("heatmap_span_value", 20.0))
+            if maturity_list:
+                rnd_T = float(np.random.choice(maturity_list))
+            else:
+                rnd_T = float(round(calls_df["T"].iloc[0], 2))
+            eligible_calls = calls_df[
+                (calls_df["T"].round(2) == rnd_T)
+                & calls_df["K"].between(S0_ref - span_sync, S0_ref + span_sync)
+            ]
+            if eligible_calls.empty:
+                eligible_calls = calls_df[
+                    calls_df["K"].between(S0_ref - span_sync, S0_ref + span_sync)
+                ]
+            if eligible_calls.empty:
+                eligible_calls = calls_df
+            chosen_row = eligible_calls.sample(1).iloc[0]
+            chosen_K = float(chosen_row["K"])
+            chosen_T = float(round(chosen_row["T"], 2))
+            sigma_pick = float(chosen_row.get("iv_market") or np.nan)
+            if not np.isfinite(sigma_pick):
+                sigma_pick = implied_vol_option(
+                    float(chosen_row.get("C_mkt", np.nan)),
+                    float(chosen_row.get("S0", S0_ref)),
+                    chosen_K,
+                    float(chosen_row["T"]),
+                    rf_rate,
+                    "call",
+                )
+            if not np.isfinite(sigma_pick):
+                sigma_pick = float(st.session_state.get("sigma_common", 0.2))
+            st.session_state["heston_sidebar_prefill"] = {
+                "S0_common": float(S0_ref),
+                "K_common": chosen_K,
+                "sigma_common": float(np.clip(sigma_pick, 0.01, 5.0)),
+                "T_common_select": chosen_T,
+            }
         except Exception as exc:
             st.error(f"❌ Erreur lors du téléchargement des données CBOE : {exc}")
 
@@ -2803,6 +2817,12 @@ def ui_heston_full_pipeline():
 # ---------------------------------------------------------------------------
 #  Application Streamlit unifiée
 # ---------------------------------------------------------------------------
+
+
+sidebar_prefill = st.session_state.pop("heston_sidebar_prefill", None)
+if sidebar_prefill:
+    for key, value in sidebar_prefill.items():
+        st.session_state[key] = value
 
 
 st.title("Application unifiée de pricing d'options")
