@@ -2331,16 +2331,34 @@ def ui_heston_full_pipeline():
     col_cfg1, col_cfg2 = st.columns(2)
     with col_cfg1:
         ticker = st.text_input("Ticker (sous-jacent)", value="SPY", key="heston_cboe_ticker").strip().upper()
-        rf_rate = st.number_input("Taux sans risque (r)", value=0.02, step=0.01, format="%.3f", key="heston_cboe_r")
-        div_yield = st.number_input("Dividende (q)", value=0.00, step=0.01, format="%.3f", key="heston_cboe_q")
+        rf_rate = float(st.session_state.get("common_rate", 0.02))
+        st.number_input(
+            "Taux sans risque (r)",
+            value=rf_rate,
+            step=0.01,
+            format="%.3f",
+            disabled=True,
+            help="Synchronisé avec la barre latérale (« Taux sans risque r »).",
+        )
+        div_yield = float(st.session_state.get("common_dividend", 0.0))
+        st.number_input(
+            "Dividende (q)",
+            value=div_yield,
+            step=0.01,
+            format="%.3f",
+            disabled=True,
+            help="Synchronisé avec la barre latérale (« Dividende continu d »).",
+        )
     with col_cfg2:
-        span_mc = st.number_input(
+        span_mc = float(st.session_state.get("heatmap_span_value", 20.0))
+        st.number_input(
             "Span autour de S0 pour les grilles K",
-            value=20.0,
+            value=span_mc,
             min_value=5.0,
             max_value=100.0,
             step=5.0,
-            key="heston_cboe_span",
+            disabled=True,
+            help="Synchronisé avec la valeur de la barre latérale « Span autour du spot (heatmaps) ».",
         )
         n_maturities = 40
         st.caption(f"Points maturité (Carr-Madan) : {n_maturities}")
