@@ -1956,12 +1956,6 @@ def ui_asian_options(
             "- **Heatmaps** : montrent comment le lissage de la moyenne interagit avec K et T, par rapport aux prix européens standards."
         ),
     )
-    render_pdf_derivation(
-        "📄 Version PDF de la dérivation (si disponible)",
-        pdf_path="latex/derivation_options_asiatiques.pdf",
-        download_name="derivation_options_asiatiques.pdf",
-    )
-
     if spot_default is None:
         st.warning("Aucun téléchargement yfinance : utilisez le spot commun.")
         spot_default = 57830.0
@@ -3034,7 +3028,6 @@ st.markdown(
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header[data-testid="stHeader"] {display: none;}
     div[data-testid="stStatusWidget"] {display: none;}
     </style>
     """,
