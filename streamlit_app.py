@@ -3034,6 +3034,8 @@ st.markdown(
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    header[data-testid="stHeader"] {display: none;}
+    div[data-testid="stStatusWidget"] {display: none;}
     </style>
     """,
     unsafe_allow_html=True,
