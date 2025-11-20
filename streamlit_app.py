@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import time
 import re
+import base64
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
@@ -1949,6 +1950,11 @@ def ui_asian_options(
             "- **Heatmaps** : montrent comment le lissage de la moyenne interagit avec K et T, par rapport aux prix européens standards."
         ),
     )
+    render_pdf_derivation(
+        "📄 Version PDF de la dérivation (si disponible)",
+        pdf_path="latex/derivation_options_asiatiques.pdf",
+        download_name="derivation_options_asiatiques.pdf",
+    )
 
     if spot_default is None:
         st.warning("Aucun téléchargement yfinance : utilisez le spot commun.")
@@ -2356,6 +2362,138 @@ def render_unlock_sidebar_button(context_key: str, label: str) -> None:
             st.rerun()
 
 
+ASIAN_LATEX_DERIVATION = r"""
+**Modèle sous la mesure risque-neutre**
+
+Sous la mesure risque-neutre $\mathbb{Q}$, le sous-jacent suit
+\[
+dS_t = (r-q)\,S_t\,dt + \sigma S_t\,dW_t, \qquad S_0>0,
+\]
+où $r$ est le taux sans risque, $q$ le dividende continu et $W_t$ un mouvement brownien standard.
+La solution explicite s'écrit
+\[
+S_t = S_0 \exp\Big[(r-q-\tfrac12\sigma^2)t + \sigma W_t\Big].
+\]
+
+**Option asiatique géométrique**
+
+On définit la moyenne géométrique continue
+\[
+G_T = \exp\!\left(\frac{1}{T}\int_0^T \ln S_t\,dt\right),
+\]
+et le payoff d'un call géométrique $(G_T-K)^+$.
+En partant de
+\[
+\ln S_t = \ln S_0 + (r-q-\tfrac12\sigma^2)t + \sigma W_t,
+\]
+on montre que
+\[
+\ln G_T = \frac{1}{T}\int_0^T \ln S_t\,dt
+= \ln S_0 + (r-q-\tfrac12\sigma^2)\frac{T}{2}
+  + \sigma Y,
+\]
+avec
+\[
+Y = \frac{1}{T}\int_0^T W_t\,dt \sim \mathcal{N}\!\Big(0,\tfrac{T}{3}\Big).
+\]
+Ainsi, $\ln G_T$ est gaussien de moyenne $\mu_G$ et variance $v_G$ :
+\[
+\mu_G = \ln S_0 + (r-q-\tfrac12\sigma^2)\frac{T}{2},\qquad
+v_G = \sigma^2\frac{T}{3},
+\]
+ce qui implique que $G_T$ est lognormal. On introduit une volatilité effective
+\[
+\tilde{\sigma} = \frac{\sigma}{\sqrt{3}},
+\]
+et un niveau initial ajusté $\tilde{S}_0$ (obtenu à partir de la moyenne de $\ln G_T$) de sorte que le pricing du call géométrique s'écrive sous une forme de type Black--Scholes :
+\[
+C_0^{\mathrm{geom}} = \tilde{S}_0 e^{-qT} N(d_1) - K e^{-rT} N(d_2),
+\]
+avec
+\[
+d_1 = \frac{\ln(\tilde{S}_0/K) + (r-q + \tfrac12 \tilde{\sigma}^2)T}{\tilde{\sigma}\sqrt{T}},
+\qquad
+d_2 = d_1 - \tilde{\sigma}\sqrt{T}.
+\]
+
+**Option asiatique arithmétique et PDE associée**
+
+La moyenne arithmétique continue est
+\[
+A_T = \frac{1}{T}\int_0^T S_t\,dt,
+\]
+et le payoff du call arithmétique est $(A_T-K)^+$.
+Comme ce payoff dépend du chemin complet, on introduit le processus d'intégrale
+\[
+I_t = \int_0^t S_u\,du,
+\]
+de sorte que $A_T = I_T/T$.
+Le couple $(S_t,I_t)$ est markovien et suit
+\[
+dS_t = (r-q)S_t\,dt + \sigma S_t\,dW_t, \qquad dI_t = S_t\,dt.
+\]
+
+On définit la fonction de valeur
+\[
+V(t,s,i) = \mathbb{E}^{\mathbb{Q}}\!\left[e^{-r(T-t)}\Big(\tfrac{I_T}{T} - K\Big)^+ \,\big|\, S_t=s,\,I_t=i\right],
+\]
+avec condition terminale
+\[
+V(T,s,i) = \Big(\tfrac{i}{T} - K\Big)^+.
+\]
+Le générateur infinitésimal du couple $(S_t,I_t)$ est
+\[
+\mathcal{L}V = (r-q)s\,V_s + \tfrac12\sigma^2 s^2\,V_{ss} + s\,V_i,
+\]
+et, par le théorème de Feynman--Kac, $V$ vérifie la PDE de valorisation
+\[
+\frac{\partial V}{\partial t}
+ + (r-q)s \frac{\partial V}{\partial s}
+ + \tfrac12 \sigma^2 s^2 \frac{\partial^2 V}{\partial s^2}
+ + s \frac{\partial V}{\partial i}
+ - r V = 0,
+\]
+sur $[0,T)\times (0,\infty)\times (0,\infty)$, avec la condition terminale ci‑dessus.
+Cette PDE n'admet pas de solution fermée simple et doit être résolue numériquement (schémas aux différences finies, méthodes spectrales, approches Monte Carlo avancées).
+"""
+
+
+def render_math_derivation(title: str, body_md: str) -> None:
+    """Affiche un menu déroulant contenant la dérivation mathématique, rendue avec LaTeX."""
+    with st.expander(title):
+        st.markdown(body_md)
+
+
+def render_pdf_derivation(title: str, pdf_path: str, download_name: str | None = None) -> None:
+    """
+    Affiche, dans un menu déroulant, un PDF (par exemple une dérivation LaTeX compilée).
+    Le PDF est encodé en base64 et inclus dans une balise <iframe>.
+    """
+    from pathlib import Path as _Path
+
+    with st.expander(title):
+        path = _Path(pdf_path)
+        if not path.exists():
+            st.info(
+                f"Le fichier PDF '{pdf_path}' n'a pas été trouvé. "
+                "Placez le PDF compilé à cet emplacement pour l'afficher ici."
+            )
+            return
+
+        with path.open("rb") as f:
+            base64_pdf = base64.b64encode(f.read()).decode("utf-8")
+
+        pdf_display = f"""
+<iframe
+    src="data:application/pdf;base64,{base64_pdf}"
+    width="100%"
+    height="700"
+    type="application/pdf"
+></iframe>
+"""
+        st.markdown(pdf_display, unsafe_allow_html=True)
+
+
 
 def ui_heston_full_pipeline():
     st.header("🚀 Surface IV Heston : CBOE → Calibration NN → Carr-Madan")
@@ -2399,7 +2537,7 @@ def ui_heston_full_pipeline():
         state.heston_S0_ref = None
         state.heston_calib_T_target = None
 
-    fetch_btn = st.button("Récupérer les données du ticker", use_container_width=True, key="heston_cboe_fetch")
+    fetch_btn = st.button("Récupérer les données du ticker", width="stretch", key="heston_cboe_fetch")
     st.divider()
 
     if fetch_btn:
@@ -2537,7 +2675,7 @@ def ui_heston_full_pipeline():
 
     run_button = False
     if calls_df is not None and puts_df is not None and S0_ref is not None:
-        run_button = st.button("🚀 Lancer l'analyse", type="primary", use_container_width=True, key="heston_cboe_run")
+        run_button = st.button("🚀 Lancer l'analyse", type="primary", width="stretch", key="heston_cboe_run")
         st.divider()
 
     if run_button:
@@ -2779,15 +2917,15 @@ def ui_heston_full_pipeline():
                 st.subheader("Carr-Madan : IV & prix (Calls)")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.plotly_chart(fig_call_cm, use_container_width=True)
+                    st.plotly_chart(fig_call_cm, width="stretch")
                 with c2:
-                    st.plotly_chart(fig_heat_call_cm, use_container_width=True)
+                    st.plotly_chart(fig_heat_call_cm, width="stretch")
 
                 st.subheader("Marché : IV & prix (Calls)")
                 c3, c4 = st.columns(2)
                 with c3:
                     if fig_call_market:
-                        st.plotly_chart(fig_call_market, use_container_width=True)
+                        st.plotly_chart(fig_call_market, width="stretch")
                     else:
                         st.info("Pas assez de points marché pour la surface call.")
                 with c4:
@@ -2806,7 +2944,7 @@ def ui_heston_full_pipeline():
                             ]
                         )
                         fig_heat_call_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
-                        st.plotly_chart(fig_heat_call_mkt, use_container_width=True)
+                        st.plotly_chart(fig_heat_call_mkt, width="stretch")
                     else:
                         st.info("Pas assez de points marché pour la heatmap call.")
 
@@ -2824,15 +2962,15 @@ def ui_heston_full_pipeline():
                 st.subheader("Carr-Madan : IV & prix (Puts)")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.plotly_chart(fig_put_cm, use_container_width=True)
+                    st.plotly_chart(fig_put_cm, width="stretch")
                 with c2:
-                    st.plotly_chart(fig_heat_put_cm, use_container_width=True)
+                    st.plotly_chart(fig_heat_put_cm, width="stretch")
 
                 st.subheader("Marché : IV & prix (Puts)")
                 c3, c4 = st.columns(2)
                 with c3:
                     if fig_put_market:
-                        st.plotly_chart(fig_put_market, use_container_width=True)
+                        st.plotly_chart(fig_put_market, width="stretch")
                     else:
                         st.info("Pas assez de points marché pour la surface put.")
                 with c4:
@@ -2851,7 +2989,7 @@ def ui_heston_full_pipeline():
                             ]
                         )
                         fig_heat_put_mkt.update_layout(xaxis_title="Strike K", yaxis_title="Maturité T")
-                        st.plotly_chart(fig_heat_put_mkt, use_container_width=True)
+                        st.plotly_chart(fig_heat_put_mkt, width="stretch")
                     else:
                         st.info("Pas assez de points marché pour la heatmap put.")
 
