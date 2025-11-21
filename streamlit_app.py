@@ -1989,6 +1989,29 @@ def ui_asian_options(
         st.info(f"Volatilité commune σ = {sigma:.4f}")
         st.info("Pricing asiatique via Monte Carlo + control variate (méthode notebook).")
 
+    if st.button(
+        f"Calculer le prix asiatique (Call) "
+        f"(S0={spot_common:.2f}, K={strike_common_local:.2f}, T={maturity_common:.2f}, r={rate_common:.2f}, σ={sigma:.2f})",
+        key="btn_price_asian",
+    ):
+        try:
+            n_obs_price = max(2, int(50 * float(maturity_common)))
+            price_asian_call, _, _ = asian_mc_control_variate(
+                spot=float(spot_common),
+                strike=float(strike_common_local),
+                rate=float(rate_common),
+                sigma=float(sigma),
+                maturity=float(maturity_common),
+                n_obs=int(n_obs_price),
+                n_paths=20_000,
+                option_type="call",
+                antithetic=True,
+                seed=None,
+            )
+            st.success(f"Prix call asiatique arithmétique (MC + control variate) = {price_asian_call:.6f}")
+        except Exception as exc:
+            st.error(f"Erreur lors du pricing asiatique : {exc}")
+
     st.subheader("Heatmaps prix asiatiques (K vs T)")
     col_k, col_t = st.columns(2)
     with col_k:
@@ -2753,6 +2776,12 @@ def ui_heston_full_pipeline():
                 "rho": float(params_cm.rho.detach()),
                 "v0": float(params_cm.v0.detach()),
             }
+            state.heston_params_cm = params_cm
+            state.heston_params_meta = {
+                "r": rf_rate,
+                "q": div_yield,
+                "S0_ref": float(S0_ref),
+            }
             st.success("✓ Calibration terminée")
             st.dataframe(pd.Series(params_dict, name="Paramètre").to_frame())
 
@@ -2894,6 +2923,44 @@ def ui_heston_full_pipeline():
 
             market_call_grid = build_market_price_grid(calls_df, "C_mkt", KK_cm, TT_cm)
             market_put_grid = build_market_price_grid(puts_df, "P_mkt", KK_cm, TT_cm)
+
+            common_S0 = float(st.session_state.get("common_spot", S0_ref))
+            common_K = float(st.session_state.get("common_strike", chosen_K))
+            common_T = float(st.session_state.get("common_maturity", calib_T_target or T_grid[0]))
+            common_r = float(st.session_state.get("common_rate", rf_rate))
+            common_d = float(st.session_state.get("common_dividend", div_yield))
+
+            cpflag_heston_single = st.selectbox(
+                "Call / Put (Heston – prix ponctuel)",
+                ["Call", "Put"],
+                key="cpflag_heston_single",
+                help="Type d’option à pricer avec les paramètres Heston calibrés.",
+            )
+            if st.button(
+                f"Calculer le prix Heston ({cpflag_heston_single}) "
+                f"(S0={common_S0:.2f}, K={common_K:.2f}, T={common_T:.2f}, r={common_r:.2f}, d={common_d:.2f})",
+                key="btn_price_eu_heston",
+            ):
+                try:
+                    Ks_t_single = torch.tensor([common_K], dtype=torch.float64)
+                    call_vals_single = carr_madan_call_torch(
+                        float(common_S0),
+                        float(common_r),
+                        float(common_d),
+                        float(common_T),
+                        params_cm,
+                        Ks_t_single,
+                    )
+                    call_price_single = float(call_vals_single[0].detach().cpu().numpy())
+                    discount_single = math.exp(-common_r * common_T)
+                    forward_single = math.exp(-common_d * common_T)
+                    put_price_single = call_price_single - common_S0 * forward_single + common_K * discount_single
+                    if cpflag_heston_single == "Call":
+                        st.success(f"Prix Heston (Call) = {call_price_single:.6f}")
+                    else:
+                        st.success(f"Prix Heston (Put) = {put_price_single:.6f}")
+                except Exception as exc:
+                    st.error(f"Erreur lors du calcul Heston : {exc}")
 
             tab_calls, tab_puts = st.tabs(["📈 Calls", "📉 Puts"])
 
@@ -3231,6 +3298,29 @@ with tab_european:
                 "- **Résultat** : à partir de ces entrées, l’application construit les matrices de prix call/put utilisées pour les cartes de chaleur."
             ),
         )
+        cpflag_eu_bsm = st.selectbox(
+            "Call / Put (BSM)",
+            ["Call", "Put"],
+            key="cpflag_eu_bsm_single",
+            help="Type d’option européenne à pricer avec la formule BSM.",
+        )
+        if st.button(
+            f"Calculer le prix BSM ({cpflag_eu_bsm}) "
+            f"(S0={common_spot_value:.2f}, K={common_strike_value:.2f}, "
+            f"T={common_maturity_value:.2f}, r={common_rate_value:.2f}, d={d_common:.2f}, σ={common_sigma_value:.2f})",
+            key="btn_price_eu_bsm",
+        ):
+            opt_type = "call" if cpflag_eu_bsm == "Call" else "put"
+            price_bsm = _vanilla_price_with_dividend(
+                option_type=opt_type,
+                S0=common_spot_value,
+                K=common_strike_value,
+                T=common_maturity_value,
+                r=common_rate_value,
+                dividend=float(d_common),
+                sigma=common_sigma_value,
+            )
+            st.success(f"Prix BSM ({cpflag_eu_bsm}) = {price_bsm:.6f}")
         st.subheader("Formule fermée BSM")
         call_heatmap_bsm, put_heatmap_bsm = _compute_bsm_heatmaps(
             heatmap_spot_values,
@@ -3272,6 +3362,37 @@ with tab_european:
                 "- **\"Pas de temps\"** : nombre de pas de simulation par trajectoire (contrôle la finesse de la discrétisation temporelle)."
             ),
         )
+        cpflag_eu_mc = st.selectbox(
+            "Call / Put (Monte Carlo)",
+            ["Call", "Put"],
+            key="cpflag_eu_mc_single",
+            help="Type d’option européenne à pricer par Monte Carlo.",
+        )
+        if st.button(
+            f"Calculer le prix Monte Carlo ({cpflag_eu_mc}) "
+            f"(S0={common_spot_value:.2f}, K={common_strike_value:.2f}, "
+            f"T={common_maturity_value:.2f}, r={common_rate_value:.2f}, d={d_common:.2f}, σ={common_sigma_value:.2f})",
+            key="btn_price_eu_mc",
+        ):
+            try:
+                paths_eu, _ = simulate_gbm_paths(
+                    S0=common_spot_value,
+                    r=common_rate_value,
+                    q=float(d_common),
+                    sigma=common_sigma_value,
+                    T=common_maturity_value,
+                    M=int(n_steps_eu),
+                    N_paths=int(n_paths_eu),
+                )
+                ST = paths_eu[-1]
+                if cpflag_eu_mc == "Call":
+                    payoff = np.maximum(ST - common_strike_value, 0.0)
+                else:
+                    payoff = np.maximum(common_strike_value - ST, 0.0)
+                price_mc = float(np.exp(-common_rate_value * common_maturity_value) * payoff.mean())
+                st.success(f"Prix Monte Carlo ({cpflag_eu_mc}) = {price_mc:.6f}")
+            except Exception as exc:
+                st.error(f"Erreur Monte Carlo européen : {exc}")
         st.subheader("Monte Carlo classique")
         n_paths_eu = st.number_input(
             "Trajectoires Monte Carlo",
@@ -3357,6 +3478,28 @@ with tab_american:
                 "- **\"Pas de temps\"** : nombre de dates intermédiaires sur lesquelles l’algorithme Longstaff–Schwartz peut potentiellement décider d’exercer l’option."
             ),
         )
+        if st.button(
+            f"Calculer le prix américain L-S ({cpflag_am}) "
+            f"(S0={S0_common:.2f}, K={K_common:.2f}, T={T_common:.2f}, r={r_common:.2f}, d={d_common:.2f}, σ={sigma_common:.2f})",
+            key="btn_price_am_ls",
+        ):
+            try:
+                option_ls = Option(
+                    s0=S0_common,
+                    T=T_common,
+                    K=K_common,
+                    v0=v0_am,
+                    call=(cpflag_am == "Call"),
+                )
+                price_ls = longstaff_schwartz_price(
+                    option=option_ls,
+                    process=process_am,
+                    n_paths=int(n_paths_am),
+                    n_steps=int(n_steps_am),
+                )
+                st.success(f"Prix américain Longstaff–Schwartz ({cpflag_am}) = {price_ls:.6f}")
+            except Exception as exc:
+                st.error(f"Erreur Longstaff–Schwartz : {exc}")
         process_type_am = st.selectbox(
             "Processus sous-jacent",
             ["Geometric Brownian Motion", "Heston"],
@@ -3459,7 +3602,37 @@ with tab_american:
                 "- **\"Nombre de pas de l'arbre\"** : profondeur de l’arbre binomial (résolution temporelle) choisie via le curseur correspondant."
             ),
         )
-        n_tree_am = st.number_input("Nombre de pas de l'arbre", value=10, min_value=5, key="n_tree_am")
+        if st.button(
+            f"Calculer le prix américain CRR ({cpflag_am}) "
+            f"(S0={S0_common:.2f}, K={K_common:.2f}, T={T_common:.2f}, r={r_common:.2f}, σ={sigma_common:.2f})",
+            key="btn_price_am_crr",
+        ):
+            try:
+                option_am_single = Option(
+                    s0=S0_common,
+                    T=T_common,
+                    K=K_common,
+                    call=(cpflag_am == 'Call'),
+                )
+                # On utilise un arbre de taille moyenne pour le prix ponctuel
+                n_steps_single = 50
+                price_crr_single = crr_pricing(
+                    r=r_common,
+                    sigma=sigma_common,
+                    option=option_am_single,
+                    n=n_steps_single,
+                )
+                st.success(f"Prix américain CRR ({cpflag_am}) ≈ {price_crr_single:.6f} (avec {n_steps_single} pas)")
+            except Exception as exc:
+                st.error(f"Erreur CRR : {exc}")
+
+        n_tree_am = st.number_input(
+            "Nombre de pas de l'arbre",
+            value=10,
+            min_value=5,
+            key="n_tree_am",
+            help="Nombre de pas de temps utilisés dans l’arbre binomial CRR.",
+        )
         option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
         int_n_tree = int(n_tree_am)
         if int_n_tree > 10:
@@ -3540,6 +3713,23 @@ with tab_lookback:
             key="t0_lb_exact",
             help="Temps déjà écoulé depuis l’émission de l’option lookback (en années).",
         )
+        if st.button(
+            f"Calculer le prix lookback exact "
+            f"(S0={common_spot_value:.2f}, T={T_common:.2f}, r={r_common:.2f}, σ={sigma_common:.2f})",
+            key="btn_price_lb_exact",
+        ):
+            try:
+                lookback_opt = lookback_call_option(
+                    T=float(T_common),
+                    t=float(t0_lb),
+                    S0=float(common_spot_value),
+                    r=float(r_common),
+                    sigma=float(sigma_common),
+                )
+                price_lb_exact = float(lookback_opt.price_exact())
+                st.success(f"Prix lookback (formule exacte) = {price_lb_exact:.6f}")
+            except Exception as exc:
+                st.error(f"Erreur lookback (formule exacte) : {exc}")
         with st.spinner("Calcul de la heatmap exacte"):
             heatmap_lb_exact = _compute_lookback_exact_heatmap(
                 heatmap_spot_values,
@@ -3591,6 +3781,23 @@ with tab_lookback:
             key="n_iters_lb_mc",
             help="Nombre de trajectoires lookback simulées pour chaque couple (S0, T).",
         )
+        if st.button(
+            f"Calculer le prix lookback MC "
+            f"(S0={common_spot_value:.2f}, T={T_common:.2f}, r={r_common:.2f}, σ={sigma_common:.2f})",
+            key="btn_price_lb_mc",
+        ):
+            try:
+                lookback_opt_mc = lookback_call_option(
+                    T=float(T_common),
+                    t=float(t0_lb_mc),
+                    S0=float(common_spot_value),
+                    r=float(r_common),
+                    sigma=float(sigma_common),
+                )
+                price_lb_mc = float(lookback_opt_mc.price_monte_carlo(int(n_iters_lb)))
+                st.success(f"Prix lookback (Monte Carlo) = {price_lb_mc:.6f}")
+            except Exception as exc:
+                st.error(f"Erreur lookback Monte Carlo : {exc}")
         with st.spinner("Calcul de la heatmap Monte Carlo"):
             heatmap_lb_mc = _compute_lookback_mc_heatmap(
                 heatmap_spot_values,
@@ -3961,7 +4168,11 @@ with tab_bermudan:
         ),
     )
 
-    if st.button("Calculer (PDE Bermuda)", key="btn_bmd_cn"):
+    if st.button(
+        f"Calculer le prix Bermuda (PDE) "
+        f"(S0={S0_common:.2f}, K={K_common:.2f}, T={T_common:.2f}, r={r_common:.2f}, d={d_common:.2f}, σ={sigma_common:.2f})",
+        key="btn_bmd_cn",
+    ):
         model_bmd = CrankNicolsonBS(
             Typeflag="Bmd",
             cpflag=cpflag_bmd_char,
