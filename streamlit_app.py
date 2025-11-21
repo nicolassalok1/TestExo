@@ -1945,7 +1945,7 @@ def ui_asian_options(
         ),
     )
     render_method_explainer(
-        "🧮 Méthode Monte Carlo + control variate (onglet Asian)",
+        "🧮 Méthode Monte Carlo + control variate",
         (
             "- **Étape 1 – Paramétrage de la grille** : pour chaque couple `(K, T)` de la grille choisie, on fixe un nombre d’observations `n_obs` le long de `[0, T]` et un nombre de trajectoires Monte Carlo `n_paths_surface`.\n"
             "- **Étape 2 – Simulation des trajectoires de `S_t`** : pour un spot initial donné, on simule sous la mesure neutre au risque `n_paths_surface` trajectoires du sous‑jacent en découpant `[0, T]` en `n_obs` pas. À chaque pas, on applique le schéma d’Euler du GBM.\n"
@@ -3169,6 +3169,7 @@ for param_key, default_value in default_sidebar_values.items():
 S0_common = st.sidebar.number_input(
     "S0 (spot)",
     min_value=0.01,
+    step=0.01,
     key="S0_common",
     placeholder=placeholder_vals.get("S0_common"),
     help="Niveau actuel du sous-jacent utilisé comme spot de référence pour les calculs.",
@@ -3176,6 +3177,7 @@ S0_common = st.sidebar.number_input(
 K_common = st.sidebar.number_input(
     "K (strike)",
     min_value=0.01,
+    step=1.0,
     key="K_common",
     placeholder=placeholder_vals.get("K_common"),
     help="Strike de référence de l’option, au centre des grilles de prix.",
@@ -3183,9 +3185,15 @@ K_common = st.sidebar.number_input(
 T_common = st.sidebar.number_input(
     "T (maturité, années)",
     min_value=0.01,
+    step=0.1,
     key="T_common",
     disabled=heston_tab_locked,
-    help="Verrouillé après le téléchargement Heston : cliquez sur un autre onglet pour réactiver." if heston_tab_locked else None,
+    help=(
+        "Maturité de l’option en années. "
+        "Verrouillée après le téléchargement Heston : cliquez sur un autre onglet pour réactiver."
+        if heston_tab_locked
+        else "Maturité de l’option en années utilisée pour tous les calculs."
+    ),
 )
 sigma_common = st.sidebar.number_input(
     "Volatilité σ",
@@ -3207,6 +3215,7 @@ d_common = st.sidebar.number_input(
 heatmap_span = st.sidebar.number_input(
     "Span autour du spot (heatmaps)",
     min_value=0.1,
+    step=1.0,
     help="Définit l'écart symétrique autour du spot utilisé pour les axes Spot / Strike des heatmaps.",
     key="heatmap_span",
 )
@@ -3322,7 +3331,7 @@ with tab_european:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet Heston européen",
+            "🔧 Paramètres utilisés – Heston européen",
             (
                 "- **\"S0 (spot)\"** : niveau actuel du sous‑jacent, utilisé comme référence pour centrer la grille de strikes et interpréter les surfaces de prix.\n"
                 "- **\"K (strike)\"** : strike de référence saisi dans la barre latérale, utilisé pour certains graphiques ciblés et pour positionner la grille en moneyness.\n"
@@ -3357,7 +3366,7 @@ with tab_european:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet BSM",
+            "🔧 Paramètres utilisés – BSM",
             (
                 "- **\"S0 (spot)\"** : centre de l’axe des spots utilisé pour construire la grille horizontale des heatmaps BSM.\n"
                 "- **\"K (strike)\"** : centre de l’axe des strikes autour duquel on génère les valeurs de `K` de la heatmap.\n"
@@ -3425,7 +3434,7 @@ with tab_european:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet Monte Carlo européen",
+            "🔧 Paramètres utilisés – Monte Carlo européen",
             (
                 "- **\"S0 (spot)\"** et **\"K (strike)\"** : déterminent le centre de la grille `(S, K)` sur laquelle on lance les simulations Monte Carlo.\n"
                 "- **\"T (maturité, années)\"** : définit la durée de chaque trajectoire simulée.\n"
@@ -3542,7 +3551,7 @@ with tab_american:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet Longstaff–Schwartz",
+            "🔧 Paramètres utilisés – Longstaff–Schwartz",
             (
                 "- **Paramètres communs de la barre latérale** :\n"
                 "  - **\"S0 (spot)\"** : niveau de référence du sous‑jacent pour les heatmaps et les simulations.\n"
@@ -3654,7 +3663,7 @@ with tab_american:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet CRR",
+            "🔧 Paramètres utilisés – CRR",
             (
                 "- **\"S0 (spot)\"** : valeur de départ du sous‑jacent à la racine de l’arbre.\n"
                 "- **\"K (strike)\"** : strike de l’option américaine modélisée sur l’arbre.\n"
@@ -3763,7 +3772,7 @@ with tab_lookback:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet Lookback exact",
+            "🔧 Paramètres utilisés – Lookback exact",
             (
                 "- **\"S0 (spot)\"** : fixe le centre de l’axe des spots de la heatmap sur lequel la formule exacte est évaluée.\n"
                 "- **\"T (maturité, années)\"** : fournit les maturités à partir desquelles on construit l’axe vertical de la heatmap.\n"
@@ -3826,7 +3835,7 @@ with tab_lookback:
             ),
         )
         render_inputs_explainer(
-            "🔧 Paramètres utilisés – onglet Lookback Monte Carlo",
+            "🔧 Paramètres utilisés – Lookback Monte Carlo",
             (
                 "- **\"S0 (spot)\"** : centre de l’axe des spots sur lequel les trajectoires lookback sont simulées.\n"
                 "- **\"T (maturité, années)\"** : ensemble des maturités pour lesquelles on simule les trajectoires et construit la heatmap.\n"
@@ -4229,7 +4238,7 @@ with tab_bermudan:
         ),
     )
     render_inputs_explainer(
-        "🔧 Paramètres utilisés – onglet Bermuda (PDE)",
+        "🔧 Paramètres utilisés – Bermuda (PDE)",
         (
             "- **\"S0 (spot)\"** : point de départ sur l’axe des prix pour lequel on lit le résultat de la PDE.\n"
             "- **\"K (strike)\"** : strike de l’option bermudéenne.\n"
@@ -4290,7 +4299,7 @@ with tab_basket:
         ),
     )
     render_inputs_explainer(
-        "🔧 Paramètres utilisés – onglet Basket",
+        "🔧 Paramètres utilisés – Basket",
         (
             "- **\"S0 (spot)\"** : niveau de spot de référence utilisé pour centrer certaines grilles de prix du panier.\n"
             "- **\"K (strike)\"** : strike de référence du basket, autour duquel on définit les domaines de strikes.\n"
