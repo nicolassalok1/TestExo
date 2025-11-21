@@ -2001,6 +2001,7 @@ def ui_asian_options(
             min_value=0.01,
             step=1.0,
             key="asian_k_min",
+            help="Borne inférieure de la plage de strikes pour les options asiatiques.",
         )
         k_max = st.number_input(
             "K max",
@@ -2008,6 +2009,7 @@ def ui_asian_options(
             min_value=k_min + 1.0,
             step=1.0,
             key="asian_k_max",
+            help="Borne supérieure de la plage de strikes pour les options asiatiques.",
         )
         st.caption(f"Domaine K: [{k_min:.2f}, {k_max:.2f}]")
     with col_t:
@@ -2020,6 +2022,7 @@ def ui_asian_options(
             min_value=0.01,
             step=0.05,
             key="asian_t_min",
+            help="Maturité minimale de la surface asiatique (en années).",
         )
         t_max = st.number_input(
             "T max (années)",
@@ -2027,6 +2030,7 @@ def ui_asian_options(
             min_value=t_min + 0.01,
             step=0.05,
             key="asian_t_max",
+            help="Maturité maximale de la surface asiatique (en années).",
         )
         st.caption(f"Domaine T: [{t_min:.2f}, {t_max:.2f}]")
 
@@ -2529,23 +2533,22 @@ def render_pdf_derivation(title: str, pdf_path: str, download_name: str | None =
 
 
 def ui_heston_full_pipeline():
-    st.header("🚀 Surface IV Heston : CBOE → Calibration NN → Carr-Madan")
-    st.write(
-        "**Pipeline issu du notebook `heston_iv_surfaces.ipynb`** :\n"
-        "1️⃣ Téléchargement des options CBOE (données retardées)\n"
-        "2️⃣ Calibration Heston (NN Carr-Madan) ciblée sur la zone d'analyse\n"
-        "3️⃣ Surfaces IV Carr-Madan vs Marché + heatmaps de prix\n"
-    )
+    st.header("Surface IV Heston")
 
     col_cfg1, col_cfg2 = st.columns(2)
     with col_cfg1:
-        ticker = st.text_input("Ticker (sous-jacent)", value="SPY", key="heston_cboe_ticker").strip().upper()
+        ticker = st.text_input(
+            "Ticker (sous-jacent)",
+            value="SPY",
+            key="heston_cboe_ticker",
+            help="Code du sous-jacent coté au CBOE utilisé pour la calibration Heston.",
+        ).strip().upper()
         rf_rate = float(st.session_state.get("common_rate", 0.02))
         div_yield = float(st.session_state.get("common_dividend", 0.0))
 
-    with col_cfg2:
-        span_mc = float(st.session_state.get("heatmap_span_value", 20.0))
-        n_maturities = 40
+        with col_cfg2:
+            span_mc = float(st.session_state.get("heatmap_span_value", 20.0))
+            n_maturities = 40
 
 
     state = st.session_state
@@ -2635,6 +2638,7 @@ def ui_heston_full_pipeline():
                 step=0.01,
                 format="%.2f",
                 key="heston_cboe_calib_band",
+                help="Largeur de la bande de maturités autour de la cible utilisée pour la calibration.",
             )
 
             unique_T = sorted(calls_df["T"].round(2).unique().tolist())
@@ -2654,20 +2658,22 @@ def ui_heston_full_pipeline():
                     index=idx_default,
                     format_func=lambda x: f"{x:.2f}",
                     key="heston_cboe_calib_target",
+                    help="Maturité autour de laquelle la calibration Heston est centrée.",
                 )
                 state.heston_calib_T_target = calib_T_target
             else:
                 st.warning("Pas de maturités disponibles dans les données CBOE.")
                 calib_T_target = None
 
-        with col_modes:
-            st.subheader("⚙️ Modes de calibration NN")
-            mode = st.radio(
-                "Choisir un mode",
-                ["Rapide", "Bonne", "Excellente"],
-                index=1,
-                horizontal=True,
-                key="heston_cboe_mode",
+            with col_modes:
+                st.subheader("⚙️ Modes de calibration NN")
+                mode = st.radio(
+                    "Choisir un mode",
+                    ["Rapide", "Bonne", "Excellente"],
+                    index=1,
+                    horizontal=True,
+                    key="heston_cboe_mode",
+                    help="Choisit un compromis entre vitesse de calibration et précision de l’ajustement.",
             )
             if mode == "Rapide":
                 max_iters = 300
@@ -3074,12 +3080,14 @@ S0_common = st.sidebar.number_input(
     min_value=0.01,
     key="S0_common",
     placeholder=placeholder_vals.get("S0_common"),
+    help="Niveau actuel du sous-jacent utilisé comme spot de référence pour les calculs.",
 )
 K_common = st.sidebar.number_input(
     "K (strike)",
     min_value=0.01,
     key="K_common",
     placeholder=placeholder_vals.get("K_common"),
+    help="Strike de référence de l’option, au centre des grilles de prix.",
 )
 T_common = st.sidebar.number_input(
     "T (maturité, années)",
@@ -3093,9 +3101,18 @@ sigma_common = st.sidebar.number_input(
     min_value=0.0001,
     key="sigma_common",
     placeholder=placeholder_vals.get("sigma_common"),
+    help="Volatilité annualisée utilisée par défaut dans les modèles de diffusion.",
 )
-r_common = st.sidebar.number_input("Taux sans risque r", key="r_common")
-d_common = st.sidebar.number_input("Dividende continu d", key="d_common")
+r_common = st.sidebar.number_input(
+    "Taux sans risque r",
+    key="r_common",
+    help="Taux sans risque continu utilisé pour actualiser les payoffs.",
+)
+d_common = st.sidebar.number_input(
+    "Dividende continu d",
+    key="d_common",
+    help="Dividende (ou rendement de portage) continu du sous-jacent.",
+)
 heatmap_span = st.sidebar.number_input(
     "Span autour du spot (heatmaps)",
     min_value=0.1,
@@ -3256,8 +3273,20 @@ with tab_european:
             ),
         )
         st.subheader("Monte Carlo classique")
-        n_paths_eu = st.number_input("Trajectoires Monte Carlo", value=10_000, min_value=100, key="n_paths_eu")
-        n_steps_eu = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_eu")
+        n_paths_eu = st.number_input(
+            "Trajectoires Monte Carlo",
+            value=10_000,
+            min_value=100,
+            key="n_paths_eu",
+            help="Nombre de trajectoires simulées pour chaque point de la grille.",
+        )
+        n_steps_eu = st.number_input(
+            "Pas de temps",
+            value=50,
+            min_value=1,
+            key="n_steps_eu",
+            help="Nombre de pas de temps utilisés pour discrétiser la maturité.",
+        )
         with st.spinner("Calcul des heatmaps Monte Carlo"):
             call_heatmap_mc, put_heatmap_mc = _compute_mc_heatmaps(
                 heatmap_spot_values,
@@ -3329,20 +3358,63 @@ with tab_american:
             ),
         )
         process_type_am = st.selectbox(
-            "Processus sous-jacent", ["Geometric Brownian Motion", "Heston"], key="process_type_am"
+            "Processus sous-jacent",
+            ["Geometric Brownian Motion", "Heston"],
+            key="process_type_am",
+            help="Choix du modèle utilisé pour simuler le sous-jacent (GBM ou Heston).",
         )
-        n_paths_am = st.number_input("Trajectoires Monte Carlo", value=1000, min_value=100, key="n_paths_am")
-        n_steps_am = st.number_input("Pas de temps", value=50, min_value=1, key="n_steps_am")
+        n_paths_am = st.number_input(
+            "Trajectoires Monte Carlo",
+            value=1000,
+            min_value=100,
+            key="n_paths_am",
+            help="Nombre de trajectoires Monte Carlo utilisées pour le prix américain.",
+        )
+        n_steps_am = st.number_input(
+            "Pas de temps",
+            value=50,
+            min_value=1,
+            key="n_steps_am",
+            help="Nombre de dates intermédiaires possibles d’exercice dans Longstaff–Schwartz.",
+        )
 
         if process_type_am == "Geometric Brownian Motion":
             process_am = GeometricBrownianMotion(mu=r_common - d_common, sigma=sigma_common)
             v0_am = None
         else:
-            kappa_am = st.number_input("κ (vitesse de rappel)", value=2.0, key="kappa_am")
-            theta_am = st.number_input("θ (variance long terme)", value=0.04, key="theta_am")
-            eta_am = st.number_input("η (vol de la variance)", value=0.5, key="eta_am")
-            rho_am = st.number_input("ρ (corrélation)", value=-0.7, min_value=-0.99, max_value=0.99, key="rho_am")
-            v0_am = st.number_input("v0 (variance initiale)", value=0.04, min_value=0.0001, key="v0_am")
+            kappa_am = st.number_input(
+                "κ (vitesse de rappel)",
+                value=2.0,
+                key="kappa_am",
+                help="Vitesse de rappel de la variance vers son niveau de long terme (modèle de Heston).",
+            )
+            theta_am = st.number_input(
+                "θ (variance long terme)",
+                value=0.04,
+                key="theta_am",
+                help="Niveau de variance de long terme vers lequel le processus Heston tend.",
+            )
+            eta_am = st.number_input(
+                "η (vol de la variance)",
+                value=0.5,
+                key="eta_am",
+                help="Volatilité de la variance (amplitude des fluctuations de variance).",
+            )
+            rho_am = st.number_input(
+                "ρ (corrélation)",
+                value=-0.7,
+                min_value=-0.99,
+                max_value=0.99,
+                key="rho_am",
+                help="Corrélation entre les chocs sur le sous-jacent et sur la variance.",
+            )
+            v0_am = st.number_input(
+                "v0 (variance initiale)",
+                value=0.04,
+                min_value=0.0001,
+                key="v0_am",
+                help="Variance instantanée initiale au début de la simulation.",
+            )
             process_am = HestonProcess(
                 mu=r_common - d_common, kappa=kappa_am, theta=theta_am, eta=eta_am, rho=rho_am
             )
@@ -3461,7 +3533,13 @@ with tab_lookback:
                 "- **\"Volatilité σ\"** : volatilité constante supposée par le modèle BSM sous‑jacent."
             ),
         )
-        t0_lb = st.number_input("t (temps courant)", value=0.0, min_value=0.0, key="t0_lb_exact")
+        t0_lb = st.number_input(
+            "t (temps courant)",
+            value=0.0,
+            min_value=0.0,
+            key="t0_lb_exact",
+            help="Temps déjà écoulé depuis l’émission de l’option lookback (en années).",
+        )
         with st.spinner("Calcul de la heatmap exacte"):
             heatmap_lb_exact = _compute_lookback_exact_heatmap(
                 heatmap_spot_values,
@@ -3499,8 +3577,20 @@ with tab_lookback:
                 "- **\"Itérations Monte Carlo\"** : nombre de trajectoires simulées pour chaque couple `(S0, T)`."
             ),
         )
-        t0_lb_mc = st.number_input("t (temps courant) MC", value=0.0, min_value=0.0, key="t0_lb_mc")
-        n_iters_lb = st.number_input("Itérations Monte Carlo", value=1000, min_value=100, key="n_iters_lb_mc")
+        t0_lb_mc = st.number_input(
+            "t (temps courant) MC",
+            value=0.0,
+            min_value=0.0,
+            key="t0_lb_mc",
+            help="Temps déjà écoulé avant la période de simulation Monte Carlo (en années).",
+        )
+        n_iters_lb = st.number_input(
+            "Itérations Monte Carlo",
+            value=1000,
+            min_value=100,
+            key="n_iters_lb_mc",
+            help="Nombre de trajectoires lookback simulées pour chaque couple (S0, T).",
+        )
         with st.spinner("Calcul de la heatmap Monte Carlo"):
             heatmap_lb_mc = _compute_lookback_mc_heatmap(
                 heatmap_spot_values,
@@ -3562,13 +3652,29 @@ with tab_barrier:
                 "- **\"Pas de temps MC\"** : nombre de pas de temps par trajectoire, qui conditionne la finesse de la détection de la barrière."
             ),
         )
-        cpflag_barrier_up = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up")
+        cpflag_barrier_up = st.selectbox(
+            "Call / Put",
+            ["Call", "Put"],
+            key="cpflag_barrier_up",
+            help="Choix du type d’option barrière (call ou put).",
+        )
         cpflag_barrier_up_char = "c" if cpflag_barrier_up == "Call" else "p"
         Hu_up = st.number_input("Barrière haute Hu", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up")
         n_paths_up = st.number_input(
-            "Trajectoires Monte Carlo", value=1000, min_value=500, step=500, key="n_paths_barrier_up"
+            "Trajectoires Monte Carlo",
+            value=1000,
+            min_value=500,
+            step=500,
+            key="n_paths_barrier_up",
+            help="Nombre de trajectoires simulées pour la barrière Up-and-out.",
         )
-        n_steps_up = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_up")
+        n_steps_up = st.number_input(
+            "Pas de temps MC",
+            value=200,
+            min_value=10,
+            key="n_steps_barrier_up",
+            help="Nombre de pas de temps pour suivre le franchissement de la barrière.",
+        )
 
         if st.button("Calculer (Up-and-out)", key="btn_barrier_up"):
             with st.spinner("Simulation Monte Carlo en cours..."):
@@ -3616,15 +3722,35 @@ with tab_barrier:
                 "- **\"Pas de temps MC\"** : nombre de pas de simulation par trajectoire."
             ),
         )
-        cpflag_barrier_down = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_down")
+        cpflag_barrier_down = st.selectbox(
+            "Call / Put",
+            ["Call", "Put"],
+            key="cpflag_barrier_down",
+            help="Choix du type d’option barrière (call ou put).",
+        )
         cpflag_barrier_down_char = "c" if cpflag_barrier_down == "Call" else "p"
         Hd_down = st.number_input(
-            "Barrière basse Hd", value=max(1.0, S0_common * 0.8), min_value=0.0001, key="Hd_down"
+            "Barrière basse Hd",
+            value=max(1.0, S0_common * 0.8),
+            min_value=0.0001,
+            key="Hd_down",
+            help="Niveau de barrière basse en dessous du spot.",
         )
         n_paths_down = st.number_input(
-            "Trajectoires Monte Carlo", value=1000, min_value=500, step=500, key="n_paths_barrier_down"
+            "Trajectoires Monte Carlo",
+            value=1000,
+            min_value=500,
+            step=500,
+            key="n_paths_barrier_down",
+            help="Nombre de trajectoires simulées pour la barrière Down-and-out.",
         )
-        n_steps_down = st.number_input("Pas de temps MC", value=200, min_value=10, key="n_steps_barrier_down")
+        n_steps_down = st.number_input(
+            "Pas de temps MC",
+            value=200,
+            min_value=10,
+            key="n_steps_barrier_down",
+            help="Nombre de pas de temps pour suivre la barrière.",
+        )
 
         if st.button("Calculer (Down-and-out)", key="btn_barrier_down"):
             with st.spinner("Simulation Monte Carlo en cours..."):
@@ -3675,16 +3801,34 @@ with tab_barrier:
                 "- Variables internes : drapeau de knock‑in par trajectoire, facteur d’actualisation, générateur pseudo‑aléatoire."
             ),
         )
-        cpflag_barrier_up_in = st.selectbox("Call / Put", ["Call", "Put"], key="cpflag_barrier_up_in")
+        cpflag_barrier_up_in = st.selectbox(
+            "Call / Put",
+            ["Call", "Put"],
+            key="cpflag_barrier_up_in",
+            help="Type d’option (call ou put) pour le scénario Up-and-in.",
+        )
         cpflag_barrier_up_in_char = "c" if cpflag_barrier_up_in == "Call" else "p"
         Hu_up_in = st.number_input(
-            "Barrière haute Hu (Up-in)", value=max(110.0, S0_common * 1.1), min_value=S0_common, key="Hu_up_in"
+            "Barrière haute Hu (Up-in)",
+            value=max(110.0, S0_common * 1.1),
+            min_value=S0_common,
+            key="Hu_up_in",
+            help="Niveau de barrière haute activant l’option Up-and-in.",
         )
         n_paths_up_in = st.number_input(
-            "Trajectoires Monte Carlo (Up-in)", value=1000, min_value=500, step=500, key="n_paths_barrier_up_in"
+            "Trajectoires Monte Carlo (Up-in)",
+            value=1000,
+            min_value=500,
+            step=500,
+            key="n_paths_barrier_up_in",
+            help="Nombre de trajectoires simulées pour l’Up-and-in.",
         )
         n_steps_up_in = st.number_input(
-            "Pas de temps MC (Up-in)", value=200, min_value=10, key="n_steps_barrier_up_in"
+            "Pas de temps MC (Up-in)",
+            value=200,
+            min_value=10,
+            key="n_steps_barrier_up_in",
+            help="Nombre de pas de temps par trajectoire pour l’Up-and-in.",
         )
 
         if st.button("Calculer (Up-and-in)", key="btn_barrier_up_in"):
